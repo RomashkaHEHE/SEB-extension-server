@@ -21,6 +21,8 @@ Implemented contract:
 
 The operator dashboard is served at `/`.
 Operator dashboard, REST API, and WebSocket are public and do not require auth.
+Session list responses include a short `displayId` (`0001`, `0002`, ...), and
+the default operator session list only returns active sessions.
 
 ## Local Run
 

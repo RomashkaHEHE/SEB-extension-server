@@ -63,6 +63,7 @@ function formatTime(value) {
 
 function renderSessions() {
   const sessions = Array.from(state.sessions.values())
+    .filter((session) => session.status === "active")
     .sort((left, right) => Date.parse(right.startedAt) - Date.parse(left.startedAt));
 
   els.sessions.innerHTML = "";
@@ -82,7 +83,7 @@ function renderSessions() {
     item.dataset.sessionId = session.sessionId;
     item.innerHTML = `
       <span class="session-line">
-        <span class="session-domain">${escapeHtml(session.domain || session.userLabel || session.sessionId)}</span>
+        <span class="session-domain">${escapeHtml(formatSessionTitle(session))}</span>
         <span class="badge ${escapeHtml(session.status)}">${escapeHtml(session.status)}</span>
       </span>
       <span class="session-url">${escapeHtml(session.currentUrl || "no url")}</span>
@@ -111,7 +112,7 @@ function renderDetail() {
     return;
   }
 
-  els.detailTitle.textContent = session.domain || session.userLabel || session.sessionId;
+  els.detailTitle.textContent = formatSessionTitle(session);
   els.detailMeta.textContent = `${session.status} - started ${formatTime(session.startedAt)} - ${session.currentUrl || "no url"}`;
 
   if (session.lastScreenshotUrl) {
@@ -157,7 +158,7 @@ function escapeHtml(value) {
 }
 
 async function loadSessions() {
-  const payload = await api("/v1/operator/sessions");
+  const payload = await api("/v1/operator/sessions?status=active");
   state.sessions = new Map(payload.sessions.map((session) => [session.sessionId, session]));
   renderSessions();
 }
@@ -181,6 +182,12 @@ function appendMessage(message) {
   els.messages.scrollTop = els.messages.scrollHeight;
 }
 
+function formatSessionTitle(session) {
+  const displayId = session.displayId ? `#${session.displayId}` : session.sessionId;
+  const label = session.domain || session.userLabel || session.sessionId;
+  return `${displayId} ${label}`;
+}
+
 function showError(error) {
   els.connectionStatus.textContent = error.message;
 }
@@ -202,7 +209,15 @@ function connectSocket() {
   state.socket.addEventListener("message", (event) => {
     const message = JSON.parse(event.data);
     if (message.type === "session.upsert") {
-      state.sessions.set(message.session.sessionId, message.session);
+      if (message.session.status === "active") {
+        state.sessions.set(message.session.sessionId, message.session);
+      } else {
+        state.sessions.delete(message.session.sessionId);
+        if (state.selectedSessionId === message.session.sessionId) {
+          state.selectedSessionId = "";
+          els.messages.innerHTML = "";
+        }
+      }
       renderSessions();
     }
     if (message.type === "session.screenshot_updated") {
@@ -269,3 +284,6 @@ els.messageForm.addEventListener("submit", async (event) => {
 
 connectSocket();
 loadSessions().then(loadMessages).catch(showError);
+setInterval(() => {
+  loadSessions().then(loadMessages).catch(showError);
+}, 15000);

@@ -75,6 +75,7 @@ test("remote session lifecycle stores and exposes latest screenshot", async () =
     assert.equal(createResponse.status, 201);
     const created = await createResponse.json();
     assert.ok(created.sessionId);
+    assert.equal(created.displayId, "0001");
     assert.ok(created.extensionToken);
     assert.match(created.websocketUrl, /^ws:\/\//);
 
@@ -114,6 +115,7 @@ test("remote session lifecycle stores and exposes latest screenshot", async () =
     assert.equal(sessionsResponse.status, 200);
     const sessions = await sessionsResponse.json();
     assert.equal(sessions.sessions.length, 1);
+    assert.equal(sessions.sessions[0].displayId, "0001");
     assert.equal(sessions.sessions[0].domain, "example.com");
     assert.ok(sessions.sessions[0].lastScreenshotUrl);
 
@@ -121,6 +123,21 @@ test("remote session lifecycle stores and exposes latest screenshot", async () =
     assert.equal(latestResponse.status, 200);
     assert.equal(latestResponse.headers.get("content-type"), "image/png");
     assert.equal(Buffer.byteLength(Buffer.from(await latestResponse.arrayBuffer())), png.length);
+
+    const closeResponse = await fetch(`${baseUrl}/v1/extension/sessions/${created.sessionId}/close`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${created.extensionToken}`
+      },
+      body: JSON.stringify({ reason: "config_reset" })
+    });
+    assert.equal(closeResponse.status, 200);
+
+    const defaultSessionsResponse = await fetch(`${baseUrl}/v1/operator/sessions`);
+    assert.equal(defaultSessionsResponse.status, 200);
+    const defaultSessions = await defaultSessionsResponse.json();
+    assert.equal(defaultSessions.sessions.length, 0);
   } finally {
     await close(service.server);
     fs.rmSync(dataDir, { recursive: true, force: true });

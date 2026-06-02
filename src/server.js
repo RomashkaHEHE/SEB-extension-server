@@ -97,6 +97,15 @@ function parsePositiveInt(rawValue, fallback) {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+function formatDisplayId(value) {
+  return String(value).padStart(4, "0");
+}
+
+function parseDisplayId(value) {
+  const match = String(value || "").match(/^#?(\d+)$/);
+  return match ? Number.parseInt(match[1], 10) : null;
+}
+
 function createState(dataDir) {
   ensureDir(dataDir);
   ensureDir(path.join(dataDir, "screenshots"));
@@ -111,9 +120,38 @@ function createState(dataDir) {
   state.sessions ||= {};
   state.messages ||= {};
   state.auditLog ||= [];
+  state.nextDisplayNumber = parsePositiveInt(state.nextDisplayNumber, 1);
+
+  let changed = false;
+  let nextDisplayNumber = state.nextDisplayNumber;
+  let maxDisplayNumber = 0;
+  const sessionsByStart = Object.values(state.sessions)
+    .sort((left, right) => Date.parse(left.startedAt || 0) - Date.parse(right.startedAt || 0));
+
+  for (const session of sessionsByStart) {
+    const existingNumber = parseDisplayId(session.displayId);
+    if (existingNumber) {
+      maxDisplayNumber = Math.max(maxDisplayNumber, existingNumber);
+      continue;
+    }
+    session.displayId = formatDisplayId(nextDisplayNumber);
+    maxDisplayNumber = Math.max(maxDisplayNumber, nextDisplayNumber);
+    nextDisplayNumber += 1;
+    changed = true;
+  }
+
+  const normalizedNextDisplayNumber = Math.max(nextDisplayNumber, maxDisplayNumber + 1);
+  if (state.nextDisplayNumber !== normalizedNextDisplayNumber) {
+    state.nextDisplayNumber = normalizedNextDisplayNumber;
+    changed = true;
+  }
 
   function save() {
     writeJsonFile(statePath, state);
+  }
+
+  if (changed) {
+    save();
   }
 
   return { state, save, screenshotsDir: path.join(dataDir, "screenshots") };
@@ -205,10 +243,17 @@ function createService(options = {}) {
     return `${getBaseUrl(req)}/v1/operator/sessions/${sessionId}/screenshots/latest`;
   }
 
+  function allocateDisplayId() {
+    const value = parsePositiveInt(state.nextDisplayNumber, 1);
+    state.nextDisplayNumber = value + 1;
+    return formatDisplayId(value);
+  }
+
   function serializeSession(session, req = null) {
     const sessionId = session.sessionId;
     return {
       sessionId,
+      displayId: session.displayId || "",
       status: deriveSessionStatus(session),
       domain: session.domain || "",
       startedAt: session.startedAt,
@@ -350,6 +395,7 @@ function createService(options = {}) {
     const body = req.body || {};
     const session = {
       sessionId,
+      displayId: allocateDisplayId(),
       extensionToken: createToken(),
       installId: typeof body.installId === "string" ? body.installId : "",
       extensionVersion: typeof body.extensionVersion === "string" ? body.extensionVersion : "",
@@ -376,6 +422,7 @@ function createService(options = {}) {
 
     res.status(201).json({
       sessionId,
+      displayId: session.displayId,
       extensionToken: session.extensionToken,
       websocketUrl: getWebSocketUrl(req, "extension"),
       screenshotIntervalSeconds: DEFAULT_SCREENSHOT_INTERVAL_SECONDS,
@@ -476,7 +523,7 @@ function createService(options = {}) {
   });
 
   app.get("/v1/operator/sessions", requireOperator, (req, res) => {
-    const status = typeof req.query.status === "string" ? req.query.status : "";
+    const status = typeof req.query.status === "string" ? req.query.status : "active";
     const sessions = Object.values(state.sessions)
       .map((session) => serializeSession(session, req))
       .filter((session) => !status || session.status === status)
@@ -683,7 +730,10 @@ function createService(options = {}) {
       operatorSockets.add(socket);
       sendJson(socket, { type: "server.hello", role: "operator", serverTime: nowIso() });
       for (const session of Object.values(state.sessions)) {
-        sendJson(socket, { type: "session.upsert", session: serializeSession(session) });
+        const serializedSession = serializeSession(session);
+        if (serializedSession.status === "active") {
+          sendJson(socket, { type: "session.upsert", session: serializedSession });
+        }
       }
       socket.on("close", () => {
         operatorSockets.delete(socket);
