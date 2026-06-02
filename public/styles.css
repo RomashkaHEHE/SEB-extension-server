@@ -48,7 +48,6 @@ button:hover {
 }
 
 button.primary,
-.token-form button,
 .message-form button {
   border-color: var(--accent);
   background: var(--accent);
@@ -96,9 +95,9 @@ input {
   font-size: 14px;
 }
 
-.token-form {
+.operator-form {
   display: grid;
-  grid-template-columns: minmax(180px, 320px) auto;
+  grid-template-columns: minmax(180px, 320px);
   gap: 10px;
   align-items: center;
 }
@@ -308,7 +307,7 @@ input {
     padding: 16px;
   }
 
-  .token-form,
+  .operator-form,
   .workspace {
     grid-template-columns: 1fr;
   }

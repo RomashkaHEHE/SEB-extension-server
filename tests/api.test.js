@@ -117,6 +117,7 @@ test("remote session lifecycle stores and exposes latest screenshot", async () =
     assert.equal(sessions.sessions.length, 1);
     assert.equal(sessions.sessions[0].displayId, "0001");
     assert.equal(sessions.sessions[0].domain, "example.com");
+    assert.equal(sessions.sessions[0].assignedOperatorId, null);
     assert.ok(sessions.sessions[0].lastScreenshotUrl);
 
     const latestResponse = await fetch(`${baseUrl}/v1/operator/sessions/${created.sessionId}/screenshots/latest`);
@@ -188,6 +189,29 @@ test("extension websocket accepts hello and forwards chat messages to operators"
 
     const hello = await extensionHello;
     assert.equal(hello.sessionId, created.sessionId);
+
+    const operatorMessage = waitForJson(extensionSocket, (message) => message.type === "operator.message");
+    const operatorMessageResponse = await fetch(`${baseUrl}/v1/operator/sessions/${created.sessionId}/messages`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        clientMessageId: "operator-client-message-1",
+        text: "Здравствуйте.",
+        operatorDisplayName: "Roman"
+      })
+    });
+    assert.equal(operatorMessageResponse.status, 201);
+    const operatorMessagePayload = await operatorMessage;
+    assert.equal(operatorMessagePayload.operatorDisplayName, "Roman");
+    assert.equal(operatorMessagePayload.text, "Здравствуйте.");
+    assert.equal(Object.hasOwn(operatorMessagePayload, "openChat"), false);
+
+    const unsupportedCommandResponse = await fetch(`${baseUrl}/v1/operator/sessions/${created.sessionId}/commands`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "chat.open", payload: {} })
+    });
+    assert.equal(unsupportedCommandResponse.status, 400);
 
     extensionSocket.send(JSON.stringify({
       type: "chat.message",

@@ -13,6 +13,9 @@
           <h1>SEB Remote Sessions</h1>
           <p id="connectionStatus">offline</p>
         </div>
+        <form id="displayNameForm" class="operator-form">
+          <input id="displayName" name="displayName" autocomplete="name" placeholder="Display name">
+        </form>
       </header>
 
       <section class="workspace">
@@ -33,10 +36,7 @@
                 <p id="detailMeta"></p>
               </div>
               <div class="actions">
-                <button id="claimSession" type="button">Claim</button>
                 <button id="captureNow" type="button">Capture</button>
-                <button id="openChat" type="button">Open chat</button>
-                <button id="closeChat" type="button">Close chat</button>
               </div>
             </header>
 

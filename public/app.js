@@ -1,4 +1,5 @@
 const state = {
+  displayName: localStorage.getItem("seb.displayName") || "",
   sessions: new Map(),
   selectedSessionId: "",
   socket: null,
@@ -7,6 +8,8 @@ const state = {
 
 const els = {
   connectionStatus: document.getElementById("connectionStatus"),
+  displayNameForm: document.getElementById("displayNameForm"),
+  displayName: document.getElementById("displayName"),
   refreshSessions: document.getElementById("refreshSessions"),
   sessions: document.getElementById("sessions"),
   emptyState: document.getElementById("emptyState"),
@@ -15,14 +18,13 @@ const els = {
   detailMeta: document.getElementById("detailMeta"),
   screenshot: document.getElementById("screenshot"),
   screenshotEmpty: document.getElementById("screenshotEmpty"),
-  claimSession: document.getElementById("claimSession"),
   captureNow: document.getElementById("captureNow"),
-  openChat: document.getElementById("openChat"),
-  closeChat: document.getElementById("closeChat"),
   messages: document.getElementById("messages"),
   messageForm: document.getElementById("messageForm"),
   messageText: document.getElementById("messageText")
 };
+
+els.displayName.value = state.displayName;
 
 function authHeaders() {
   return {};
@@ -177,7 +179,10 @@ async function loadMessages() {
 function appendMessage(message) {
   const row = document.createElement("div");
   row.className = `message ${message.sender === "operator" ? "operator" : "extension"}`;
-  row.innerHTML = `<strong>${escapeHtml(message.sender)} - ${escapeHtml(formatTime(message.createdAt))}</strong>${escapeHtml(message.text)}`;
+  const sender = message.sender === "operator"
+    ? message.operatorDisplayName || message.operatorId || "operator"
+    : "extension";
+  row.innerHTML = `<strong>${escapeHtml(sender)} - ${escapeHtml(formatTime(message.createdAt))}</strong>${escapeHtml(message.text)}`;
   els.messages.append(row);
   els.messages.scrollTop = els.messages.scrollHeight;
 }
@@ -238,14 +243,14 @@ els.refreshSessions.addEventListener("click", () => {
   loadSessions().then(loadMessages).catch(showError);
 });
 
-els.claimSession.addEventListener("click", () => {
-  if (!state.selectedSessionId) {
-    return;
-  }
-  api(`/v1/operator/sessions/${state.selectedSessionId}/claim`, {
-    method: "POST",
-    body: JSON.stringify({ operatorId: "operator" })
-  }).then(loadSessions).catch(showError);
+els.displayNameForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  els.displayName.blur();
+});
+
+els.displayName.addEventListener("input", () => {
+  state.displayName = els.displayName.value.trim();
+  localStorage.setItem("seb.displayName", state.displayName);
 });
 
 async function sendCommand(name) {
@@ -259,8 +264,6 @@ async function sendCommand(name) {
 }
 
 els.captureNow.addEventListener("click", () => sendCommand("screenshot.capture_now").catch(showError));
-els.openChat.addEventListener("click", () => sendCommand("chat.open").catch(showError));
-els.closeChat.addEventListener("click", () => sendCommand("chat.close").catch(showError));
 
 els.messageForm.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -276,7 +279,7 @@ els.messageForm.addEventListener("submit", async (event) => {
     body: JSON.stringify({
       clientMessageId: crypto.randomUUID(),
       text,
-      requestOpenChat: true
+      operatorDisplayName: state.displayName || "Operator"
     })
   });
   els.messageText.value = "";

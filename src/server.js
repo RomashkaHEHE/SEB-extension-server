@@ -19,9 +19,7 @@ const STALE_AFTER_MS = 90 * 1000;
 const OFFLINE_AFTER_MS = 5 * 60 * 1000;
 const WS_OPEN = 1;
 const SUPPORTED_COMMANDS = new Set([
-  "screenshot.capture_now",
-  "chat.open",
-  "chat.close"
+  "screenshot.capture_now"
 ]);
 
 function nowIso() {
@@ -104,6 +102,11 @@ function formatDisplayId(value) {
 function parseDisplayId(value) {
   const match = String(value || "").match(/^#?(\d+)$/);
   return match ? Number.parseInt(match[1], 10) : null;
+}
+
+function normalizeDisplayName(value) {
+  const normalized = typeof value === "string" ? value.trim().replace(/\s+/g, " ") : "";
+  return normalized.slice(0, 80);
 }
 
 function createState(dataDir) {
@@ -264,7 +267,7 @@ function createService(options = {}) {
       ) : null,
       currentUrl: session.currentUrl || session.startUrl || "",
       capabilities: asArray(session.capabilities),
-      assignedOperatorId: session.assignedOperatorId || null,
+      assignedOperatorId: null,
       extensionVersion: session.extensionVersion || "",
       installId: session.installId || "",
       userLabel: session.userLabel || "",
@@ -345,9 +348,9 @@ function createService(options = {}) {
           type: "operator.message",
           messageId: message.messageId,
           operatorId: message.operatorId,
+          operatorDisplayName: message.operatorDisplayName || "",
           text: message.text,
-          createdAt: message.createdAt,
-          openChat: Boolean(message.openChat)
+          createdAt: message.createdAt
         });
         message.deliveryStatus = "delivered";
         delivered = true;
@@ -410,7 +413,6 @@ function createService(options = {}) {
       lastSeenAt: createdAt,
       lastScreenshotAt: null,
       lastScreenshot: null,
-      assignedOperatorId: null,
       chatOpen: false,
       commands: []
     };
@@ -559,29 +561,6 @@ function createService(options = {}) {
     return res.sendFile(filePath);
   });
 
-  app.post("/v1/operator/sessions/:sessionId/claim", requireOperator, (req, res) => {
-    const session = getSession(req.params.sessionId);
-    if (!session) {
-      return jsonError(res, 404, "session_not_found", "Session was not found");
-    }
-
-    const operatorId = typeof req.body?.operatorId === "string" && req.body.operatorId.trim()
-      ? req.body.operatorId.trim()
-      : "operator";
-    const claimedAt = nowIso();
-    session.assignedOperatorId = operatorId;
-    session.claimedAt = claimedAt;
-    audit("session.claim", session.sessionId, operatorId);
-    save();
-    broadcastSessionUpsert(session, req);
-
-    return res.json({
-      sessionId: session.sessionId,
-      assignedOperatorId: operatorId,
-      claimedAt
-    });
-  });
-
   app.get("/v1/operator/sessions/:sessionId/messages", requireOperator, (req, res) => {
     const session = getSession(req.params.sessionId);
     if (!session) {
@@ -606,9 +585,9 @@ function createService(options = {}) {
       clientMessageId: typeof req.body.clientMessageId === "string" ? req.body.clientMessageId : "",
       sessionId: session.sessionId,
       sender: "operator",
-      operatorId: session.assignedOperatorId || "operator",
+      operatorId: "operator",
+      operatorDisplayName: normalizeDisplayName(req.body?.operatorDisplayName) || "Operator",
       text,
-      openChat: Boolean(req.body.requestOpenChat),
       createdAt: nowIso(),
       deliveryStatus: "queued"
     };
@@ -623,9 +602,9 @@ function createService(options = {}) {
         type: "operator.message",
         messageId: message.messageId,
         operatorId: message.operatorId,
+        operatorDisplayName: message.operatorDisplayName,
         text: message.text,
-        createdAt: message.createdAt,
-        openChat: message.openChat
+        createdAt: message.createdAt
       });
       message.deliveryStatus = "delivered";
     }
@@ -636,6 +615,7 @@ function createService(options = {}) {
       sessionId: session.sessionId,
       messageId: message.messageId,
       sender: "operator",
+      operatorDisplayName: message.operatorDisplayName,
       text: message.text,
       createdAt: message.createdAt
     });
@@ -667,7 +647,7 @@ function createService(options = {}) {
     };
     session.commands ||= [];
     session.commands.push(command);
-    audit("session.command", session.sessionId, session.assignedOperatorId || "operator", {
+    audit("session.command", session.sessionId, "operator", {
       commandId: command.commandId,
       name
     });
@@ -832,6 +812,7 @@ function createService(options = {}) {
           sessionId: session.sessionId,
           messageId: chatMessage.messageId,
           sender: "extension",
+          operatorDisplayName: "",
           text: chatMessage.text,
           createdAt: chatMessage.createdAt
         });

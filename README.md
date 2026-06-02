@@ -13,7 +13,6 @@ Implemented contract:
 - `GET /v1/operator/sessions`
 - `GET /v1/operator/sessions/:sessionId`
 - `GET /v1/operator/sessions/:sessionId/screenshots/latest`
-- `POST /v1/operator/sessions/:sessionId/claim`
 - `POST /v1/operator/sessions/:sessionId/messages`
 - `POST /v1/operator/sessions/:sessionId/commands`
 - `WS /v1/extension/ws?sessionId=...`
@@ -23,6 +22,9 @@ The operator dashboard is served at `/`.
 Operator dashboard, REST API, and WebSocket are public and do not require auth.
 Session list responses include a short `displayId` (`0001`, `0002`, ...), and
 the default operator session list only returns active sessions.
+Operators cannot claim sessions and cannot open or close the extension chat.
+Operator messages can include `operatorDisplayName`; the extension receives the
+same value in `operator.message`.
 
 ## Local Run
 
