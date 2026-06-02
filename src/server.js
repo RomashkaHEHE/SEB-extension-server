@@ -124,7 +124,6 @@ function createService(options = {}) {
     host: options.host || process.env.HOST || "0.0.0.0",
     port: parsePositiveInt(options.port || process.env.PORT, 3000),
     publicBaseUrl: options.publicBaseUrl || process.env.PUBLIC_BASE_URL || "",
-    operatorApiToken: options.operatorApiToken ?? process.env.OPERATOR_API_TOKEN ?? "",
     corsOrigin: options.corsOrigin ?? process.env.CORS_ORIGIN ?? "",
     dataDir: path.resolve(options.dataDir || process.env.DATA_DIR || path.join(process.cwd(), "data")),
     screenshotMaxBytes: parsePositiveInt(
@@ -282,18 +281,9 @@ function createService(options = {}) {
     return next();
   }
 
-  function isOperatorTokenValid(token) {
-    if (!config.operatorApiToken) {
-      return true;
-    }
-    return safeEqual(config.operatorApiToken, token);
-  }
-
   function requireOperator(req, res, next) {
-    const token = getBearerToken(req.get("authorization")) || req.get("x-operator-token") || "";
-    if (!isOperatorTokenValid(token)) {
-      return jsonError(res, 401, "operator_not_authorized", "Operator token is invalid");
-    }
+    void req;
+    void res;
     return next();
   }
 
@@ -683,16 +673,6 @@ function createService(options = {}) {
       return;
     }
 
-    if (pathname === "/v1/operator/ws") {
-      const url = new URL(req.url, `http://${req.headers.host}`);
-      const token = getBearerToken(req.headers.authorization) || url.searchParams.get("token") || "";
-      if (!isOperatorTokenValid(token)) {
-        socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
-        socket.destroy();
-        return;
-      }
-    }
-
     wsServer.handleUpgrade(req, socket, head, (ws) => {
       wsServer.emit("connection", ws, req, { pathname });
     });
@@ -858,9 +838,7 @@ function start() {
   const service = createService();
   service.server.listen(service.config.port, service.config.host, () => {
     console.log(`SEB extension server listening on ${service.config.host}:${service.config.port}`);
-    if (!service.config.operatorApiToken) {
-      console.warn("OPERATOR_API_TOKEN is not set; operator API is unprotected.");
-    }
+    console.warn("Operator API is public.");
   });
 }
 

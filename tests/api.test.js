@@ -110,18 +110,14 @@ test("remote session lifecycle stores and exposes latest screenshot", async () =
     const screenshot = await screenshotResponse.json();
     assert.ok(screenshot.screenshotId);
 
-    const sessionsResponse = await fetch(`${baseUrl}/v1/operator/sessions?status=active`, {
-      headers: { Authorization: "Bearer operator-test-token" }
-    });
+    const sessionsResponse = await fetch(`${baseUrl}/v1/operator/sessions?status=active`);
     assert.equal(sessionsResponse.status, 200);
     const sessions = await sessionsResponse.json();
     assert.equal(sessions.sessions.length, 1);
     assert.equal(sessions.sessions[0].domain, "example.com");
     assert.ok(sessions.sessions[0].lastScreenshotUrl);
 
-    const latestResponse = await fetch(`${baseUrl}/v1/operator/sessions/${created.sessionId}/screenshots/latest`, {
-      headers: { Authorization: "Bearer operator-test-token" }
-    });
+    const latestResponse = await fetch(`${baseUrl}/v1/operator/sessions/${created.sessionId}/screenshots/latest`);
     assert.equal(latestResponse.status, 200);
     assert.equal(latestResponse.headers.get("content-type"), "image/png");
     assert.equal(Buffer.byteLength(Buffer.from(await latestResponse.arrayBuffer())), png.length);
@@ -156,7 +152,7 @@ test("extension websocket accepts hello and forwards chat messages to operators"
     });
     const created = await createResponse.json();
 
-    const operatorSocket = new WebSocket(`${wsBaseUrl}/v1/operator/ws?token=operator-test-token`);
+    const operatorSocket = new WebSocket(`${wsBaseUrl}/v1/operator/ws`);
     sockets.push(operatorSocket);
     const operatorHello = waitForJson(operatorSocket, (message) => message.type === "server.hello");
     await waitForOpen(operatorSocket);

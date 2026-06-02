@@ -20,6 +20,7 @@ Implemented contract:
 - `WS /v1/operator/ws`
 
 The operator dashboard is served at `/`.
+Operator dashboard, REST API, and WebSocket are public and do not require auth.
 
 ## Local Run
 
@@ -36,7 +37,6 @@ Open `http://localhost:3000`.
 - `PORT`: HTTP port, default `3000`.
 - `HOST`: listen host, default `0.0.0.0`.
 - `PUBLIC_BASE_URL`: public site URL used in API responses, for example `https://urfuseb.ru`.
-- `OPERATOR_API_TOKEN`: bearer token required by operator REST and WebSocket APIs.
 - `DATA_DIR`: disk storage for sessions and screenshots, default `./data`.
 - `SCREENSHOT_MAX_BYTES`: multipart screenshot limit, default `8388608`.
 - `CORS_ORIGIN`: optional comma-separated allow-list.
@@ -58,4 +58,3 @@ Required repository secrets:
 - `DEPLOY_PATH`: target path, for example `/home/user1/apps/seb-extension-server`.
 - `DEPLOY_SSH_PRIVATE_KEY`: private SSH key allowed in the server user's `authorized_keys`.
 - `APP_PUBLIC_BASE_URL`: public URL, for example `https://urfuseb.ru`.
-- `OPERATOR_API_TOKEN`: bearer token for the operator dashboard and operator API.

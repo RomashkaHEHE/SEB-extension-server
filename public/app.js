@@ -1,5 +1,4 @@
 const state = {
-  token: localStorage.getItem("seb.operatorToken") || "",
   sessions: new Map(),
   selectedSessionId: "",
   socket: null,
@@ -7,8 +6,6 @@ const state = {
 };
 
 const els = {
-  tokenForm: document.getElementById("tokenForm"),
-  operatorToken: document.getElementById("operatorToken"),
   connectionStatus: document.getElementById("connectionStatus"),
   refreshSessions: document.getElementById("refreshSessions"),
   sessions: document.getElementById("sessions"),
@@ -27,10 +24,8 @@ const els = {
   messageText: document.getElementById("messageText")
 };
 
-els.operatorToken.value = state.token;
-
 function authHeaders() {
-  return state.token ? { Authorization: `Bearer ${state.token}` } : {};
+  return {};
 }
 
 async function api(path, options = {}) {
@@ -91,7 +86,7 @@ function renderSessions() {
         <span class="badge ${escapeHtml(session.status)}">${escapeHtml(session.status)}</span>
       </span>
       <span class="session-url">${escapeHtml(session.currentUrl || "no url")}</span>
-      <span class="session-time">seen ${escapeHtml(formatTime(session.lastSeenAt))} · screenshot ${escapeHtml(formatTime(session.lastScreenshotAt))}</span>
+      <span class="session-time">seen ${escapeHtml(formatTime(session.lastSeenAt))} - screenshot ${escapeHtml(formatTime(session.lastScreenshotAt))}</span>
     `;
     item.addEventListener("click", () => {
       state.selectedSessionId = session.sessionId;
@@ -117,7 +112,7 @@ function renderDetail() {
   }
 
   els.detailTitle.textContent = session.domain || session.userLabel || session.sessionId;
-  els.detailMeta.textContent = `${session.status} · started ${formatTime(session.startedAt)} · ${session.currentUrl || "no url"}`;
+  els.detailMeta.textContent = `${session.status} - started ${formatTime(session.startedAt)} - ${session.currentUrl || "no url"}`;
 
   if (session.lastScreenshotUrl) {
     els.screenshot.hidden = false;
@@ -181,7 +176,7 @@ async function loadMessages() {
 function appendMessage(message) {
   const row = document.createElement("div");
   row.className = `message ${message.sender === "operator" ? "operator" : "extension"}`;
-  row.innerHTML = `<strong>${escapeHtml(message.sender)} · ${escapeHtml(formatTime(message.createdAt))}</strong>${escapeHtml(message.text)}`;
+  row.innerHTML = `<strong>${escapeHtml(message.sender)} - ${escapeHtml(formatTime(message.createdAt))}</strong>${escapeHtml(message.text)}`;
   els.messages.append(row);
   els.messages.scrollTop = els.messages.scrollHeight;
 }
@@ -196,9 +191,6 @@ function connectSocket() {
   }
   const protocol = location.protocol === "https:" ? "wss" : "ws";
   const url = new URL(`${protocol}://${location.host}/v1/operator/ws`);
-  if (state.token) {
-    url.searchParams.set("token", state.token);
-  }
 
   state.socket = new WebSocket(url);
   state.socket.addEventListener("open", () => {
@@ -226,14 +218,6 @@ function connectSocket() {
     }
   });
 }
-
-els.tokenForm.addEventListener("submit", (event) => {
-  event.preventDefault();
-  state.token = els.operatorToken.value.trim();
-  localStorage.setItem("seb.operatorToken", state.token);
-  connectSocket();
-  loadSessions().then(loadMessages).catch(showError);
-});
 
 els.refreshSessions.addEventListener("click", () => {
   loadSessions().then(loadMessages).catch(showError);
