@@ -28,7 +28,8 @@ body {
 }
 
 button,
-input {
+input,
+textarea {
   font: inherit;
 }
 
@@ -54,7 +55,8 @@ button.primary,
   color: #ffffff;
 }
 
-input {
+input,
+textarea {
   min-height: 38px;
   width: 100%;
   border: 1px solid var(--line);
@@ -62,6 +64,14 @@ input {
   background: #ffffff;
   color: var(--ink);
   padding: 0 12px;
+}
+
+textarea {
+  min-height: 66px;
+  max-height: 132px;
+  padding: 9px 12px;
+  line-height: 1.35;
+  resize: vertical;
 }
 
 .shell {
@@ -292,9 +302,15 @@ input {
   color: var(--muted);
 }
 
+.message-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .message-form {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
   gap: 10px;
   padding: 12px 16px;
   border-top: 1px solid var(--line);

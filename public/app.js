@@ -182,7 +182,12 @@ function appendMessage(message) {
   const sender = message.sender === "operator"
     ? message.operatorDisplayName || message.operatorId || "operator"
     : "extension";
-  row.innerHTML = `<strong>${escapeHtml(sender)} - ${escapeHtml(formatTime(message.createdAt))}</strong>${escapeHtml(message.text)}`;
+  const meta = document.createElement("strong");
+  meta.textContent = `${sender} - ${formatTime(message.createdAt)}`;
+  const body = document.createElement("div");
+  body.className = "message-text";
+  body.textContent = message.text || "";
+  row.append(meta, body);
   els.messages.append(row);
   els.messages.scrollTop = els.messages.scrollHeight;
 }
@@ -283,6 +288,13 @@ els.messageForm.addEventListener("submit", async (event) => {
     })
   });
   els.messageText.value = "";
+});
+
+els.messageText.addEventListener("keydown", (event) => {
+  if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+    event.preventDefault();
+    els.messageForm.requestSubmit();
+  }
 });
 
 connectSocket();
