@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>SEB Remote Sessions</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div>
+          <h1>SEB Remote Sessions</h1>
+          <p id="connectionStatus">offline</p>
+        </div>
+        <form id="tokenForm" class="token-form">
+          <input id="operatorToken" name="operatorToken" type="password" autocomplete="current-password" placeholder="Operator token">
+          <button type="submit">Connect</button>
+        </form>
+      </header>
+
+      <section class="workspace">
+        <aside class="session-list" aria-label="Sessions">
+          <div class="list-toolbar">
+            <strong>Sessions</strong>
+            <button id="refreshSessions" type="button">Refresh</button>
+          </div>
+          <div id="sessions" class="sessions"></div>
+        </aside>
+
+        <section class="detail">
+          <div id="emptyState" class="empty-state">Select an active session</div>
+          <article id="sessionDetail" class="session-detail" hidden>
+            <header class="detail-header">
+              <div>
+                <h2 id="detailTitle"></h2>
+                <p id="detailMeta"></p>
+              </div>
+              <div class="actions">
+                <button id="claimSession" type="button">Claim</button>
+                <button id="captureNow" type="button">Capture</button>
+                <button id="openChat" type="button">Open chat</button>
+                <button id="closeChat" type="button">Close chat</button>
+              </div>
+            </header>
+
+            <div class="preview">
+              <img id="screenshot" alt="Latest screenshot">
+              <p id="screenshotEmpty">No screenshot yet</p>
+            </div>
+
+            <section class="chat">
+              <div id="messages" class="messages"></div>
+              <form id="messageForm" class="message-form">
+                <input id="messageText" name="messageText" autocomplete="off" placeholder="Message to extension user">
+                <button type="submit">Send</button>
+              </form>
+            </section>
+          </article>
+        </section>
+      </section>
+    </main>
+    <script src="/app.js"></script>
+  </body>
+</html>

@@ -1,0 +1,61 @@
+# SEB Extension Server
+
+Remote session server for SEB Helper Pro.
+
+## API
+
+Implemented contract:
+
+- `POST /v1/extension/sessions`
+- `PATCH /v1/extension/sessions/:sessionId/heartbeat`
+- `POST /v1/extension/sessions/:sessionId/screenshots`
+- `PATCH /v1/extension/sessions/:sessionId/close`
+- `GET /v1/operator/sessions`
+- `GET /v1/operator/sessions/:sessionId`
+- `GET /v1/operator/sessions/:sessionId/screenshots/latest`
+- `POST /v1/operator/sessions/:sessionId/claim`
+- `POST /v1/operator/sessions/:sessionId/messages`
+- `POST /v1/operator/sessions/:sessionId/commands`
+- `WS /v1/extension/ws?sessionId=...`
+- `WS /v1/operator/ws`
+
+The operator dashboard is served at `/`.
+
+## Local Run
+
+```bash
+cp .env.example .env
+npm install
+npm start
+```
+
+Open `http://localhost:3000`.
+
+## Environment
+
+- `PORT`: HTTP port, default `3000`.
+- `HOST`: listen host, default `0.0.0.0`.
+- `PUBLIC_BASE_URL`: public site URL used in API responses, for example `https://urfuseb.ru`.
+- `OPERATOR_API_TOKEN`: bearer token required by operator REST and WebSocket APIs.
+- `DATA_DIR`: disk storage for sessions and screenshots, default `./data`.
+- `SCREENSHOT_MAX_BYTES`: multipart screenshot limit, default `8388608`.
+- `CORS_ORIGIN`: optional comma-separated allow-list.
+
+## GitHub Actions Autodeploy
+
+The repository has `.github/workflows/deploy.yml`. It runs tests on every push to
+`main`, uploads a release archive to the server over SSH, writes `.env`, installs
+production dependencies, and restarts the `seb-extension-server` user systemd
+service.
+
+The production service listens on `127.0.0.1:3010` behind nginx.
+
+Required repository secrets:
+
+- `DEPLOY_HOST`: server IP or host.
+- `DEPLOY_USER`: SSH user.
+- `DEPLOY_SSH_PORT`: SSH port, usually `22`.
+- `DEPLOY_PATH`: target path, for example `/home/user1/apps/seb-extension-server`.
+- `DEPLOY_SSH_PRIVATE_KEY`: private SSH key allowed in the server user's `authorized_keys`.
+- `APP_PUBLIC_BASE_URL`: public URL, for example `https://urfuseb.ru`.
+- `OPERATOR_API_TOKEN`: bearer token for the operator dashboard and operator API.

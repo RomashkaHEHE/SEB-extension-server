@@ -1,0 +1,107 @@
+name: Deploy
+
+on:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install and test
+        run: |
+          npm ci
+          npm test
+
+      - name: Configure SSH
+        env:
+          DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_SSH_PORT: ${{ secrets.DEPLOY_SSH_PORT }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -p "$DEPLOY_SSH_PORT" "$DEPLOY_HOST" >> ~/.ssh/known_hosts
+
+      - name: Package app
+        run: |
+          set -euo pipefail
+          tar \
+            --exclude='.git' \
+            --exclude='node_modules' \
+            --exclude='data' \
+            --exclude='.env' \
+            -czf /tmp/seb-extension-server.tgz .
+
+      - name: Upload package
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_SSH_PORT: ${{ secrets.DEPLOY_SSH_PORT }}
+        run: |
+          set -euo pipefail
+          scp -i ~/.ssh/deploy_key -P "$DEPLOY_SSH_PORT" \
+            /tmp/seb-extension-server.tgz "$DEPLOY_USER@$DEPLOY_HOST:/tmp/seb-extension-server.tgz"
+
+      - name: Deploy to server
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_SSH_PORT: ${{ secrets.DEPLOY_SSH_PORT }}
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+          APP_PUBLIC_BASE_URL: ${{ secrets.APP_PUBLIC_BASE_URL }}
+          OPERATOR_API_TOKEN: ${{ secrets.OPERATOR_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/deploy_key -p "$DEPLOY_SSH_PORT" "$DEPLOY_USER@$DEPLOY_HOST" 'bash -s' <<EOF
+          set -euo pipefail
+          DEPLOY_PATH="$DEPLOY_PATH"
+          case "\$DEPLOY_PATH" in
+            /home/*/apps/*) ;;
+            *) echo "Unexpected DEPLOY_PATH: \$DEPLOY_PATH" >&2; exit 1 ;;
+          esac
+          mkdir -p "\$DEPLOY_PATH"
+          find "\$DEPLOY_PATH" -mindepth 1 -maxdepth 1 ! -name data -exec rm -rf {} +
+          tar -xzf /tmp/seb-extension-server.tgz -C "\$DEPLOY_PATH"
+          cat > "\$DEPLOY_PATH/.env" <<ENV_FILE
+          NODE_ENV=production
+          HOST=127.0.0.1
+          PORT=3010
+          PUBLIC_BASE_URL=$APP_PUBLIC_BASE_URL
+          OPERATOR_API_TOKEN=$OPERATOR_API_TOKEN
+          DATA_DIR=$DEPLOY_PATH/data
+          SCREENSHOT_MAX_BYTES=8388608
+          CORS_ORIGIN=
+          ENV_FILE
+          cd "\$DEPLOY_PATH"
+          export PATH="\$HOME/.local/bin:\$PATH"
+          NPM_BIN="\$(command -v npm || true)"
+          if [ -z "\$NPM_BIN" ] && [ -x "\$HOME/.local/bin/npm" ]; then
+            NPM_BIN="\$HOME/.local/bin/npm"
+          fi
+          if [ -z "\$NPM_BIN" ]; then
+            echo "npm was not found" >&2
+            exit 1
+          fi
+          "\$NPM_BIN" ci --omit=dev
+          export XDG_RUNTIME_DIR="/run/user/\$(id -u)"
+          systemctl --user restart seb-extension-server
+          rm -f /tmp/seb-extension-server.tgz
+          EOF
