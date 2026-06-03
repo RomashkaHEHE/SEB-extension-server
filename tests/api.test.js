@@ -233,3 +233,138 @@ test("extension websocket accepts hello and forwards chat messages to operators"
     fs.rmSync(dataDir, { recursive: true, force: true });
   }
 });
+
+test("moodle question snapshots and answers are forwarded over websockets", async () => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "seb-server-"));
+  const service = createService({
+    host: "127.0.0.1",
+    port: 0,
+    dataDir,
+    publicBaseUrl: ""
+  });
+  const baseUrl = await listen(service.server);
+  const wsBaseUrl = baseUrl.replace(/^http:/, "ws:");
+  const sockets = [];
+
+  try {
+    const createResponse = await fetch(`${baseUrl}/v1/extension/sessions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        installId: "install-moodle",
+        domain: "exam2.urfu.ru",
+        capabilities: ["moodle.question_snapshot"]
+      })
+    });
+    const created = await createResponse.json();
+
+    const operatorSocket = new WebSocket(`${wsBaseUrl}/v1/operator/ws`);
+    sockets.push(operatorSocket);
+    const operatorHello = waitForJson(operatorSocket, (message) => message.type === "server.hello");
+    await waitForOpen(operatorSocket);
+    await operatorHello;
+
+    const extensionSocket = new WebSocket(`${wsBaseUrl}/v1/extension/ws?sessionId=${created.sessionId}`);
+    sockets.push(extensionSocket);
+    await waitForOpen(extensionSocket);
+    const extensionHello = waitForJson(extensionSocket, (message) => message.type === "server.hello");
+    extensionSocket.send(JSON.stringify({
+      type: "extension.hello",
+      sessionId: created.sessionId,
+      extensionToken: created.extensionToken,
+      capabilities: ["moodle.question_snapshot"]
+    }));
+    await extensionHello;
+
+    const questionUpsert = waitForJson(operatorSocket, (message) => (
+      message.type === "moodle.question.upsert" && message.sessionId === created.sessionId
+    ));
+    const questionResponse = await fetch(`${baseUrl}/v1/extension/sessions/${created.sessionId}/moodle/questions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${created.extensionToken}`
+      },
+      body: JSON.stringify({
+        clientQuestionId: "attempt-786072-slot-6",
+        pageUrl: "https://exam2.urfu.ru/mod/quiz/attempt.php?attempt=786072&cmid=645&page=5",
+        baseUrl: "https://exam2.urfu.ru/mod/quiz/",
+        attemptId: "786072",
+        cmid: "645",
+        slot: "6",
+        questionNumber: "6",
+        questionType: "match",
+        questionFingerprint: "q910995:6",
+        html: "<div id=\"question-910995-6\" class=\"que match\"><select name=\"q910995:6_sub0\"><option value=\"1\">A</option></select></div>",
+        controls: [{
+          name: "q910995:6_sub0",
+          id: "q910995:6_sub0",
+          type: "select",
+          options: [{ value: "1", label: "A" }]
+        }],
+        moodle: {
+          version: "2023100902",
+          theme: "classic"
+        }
+      })
+    });
+    assert.equal(questionResponse.status, 201);
+    const questionCreated = await questionResponse.json();
+    assert.ok(questionCreated.questionId);
+
+    const upsert = await questionUpsert;
+    assert.equal(upsert.question.questionType, "match");
+    assert.equal(upsert.question.controls[0].name, "q910995:6_sub0");
+
+    const listResponse = await fetch(`${baseUrl}/v1/operator/sessions/${created.sessionId}/moodle/questions`);
+    assert.equal(listResponse.status, 200);
+    const list = await listResponse.json();
+    assert.equal(list.questions.length, 1);
+    assert.equal(list.questions[0].clientQuestionId, "attempt-786072-slot-6");
+
+    const extensionAnswer = waitForJson(extensionSocket, (message) => message.type === "moodle.answer");
+    const answerResponse = await fetch(`${baseUrl}/v1/operator/sessions/${created.sessionId}/moodle/questions/${questionCreated.questionId}/answers`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        fields: [{
+          name: "q910995:6_sub0",
+          id: "q910995:6_sub0",
+          type: "select",
+          value: "1"
+        }],
+        operatorDisplayName: "Roman"
+      })
+    });
+    assert.equal(answerResponse.status, 201);
+    const answerCreated = await answerResponse.json();
+    assert.equal(answerCreated.deliveryStatus, "delivered");
+    assert.equal(answerCreated.hotkey.label, "Ctrl+Shift+2");
+
+    const answer = await extensionAnswer;
+    assert.equal(answer.questionId, questionCreated.questionId);
+    assert.equal(answer.hotkey.code, "Digit2");
+    assert.equal(answer.fields[0].value, "1");
+
+    const resultMessage = waitForJson(operatorSocket, (message) => (
+      message.type === "moodle.answer.result" && message.answerId === answer.answerId
+    ));
+    extensionSocket.send(JSON.stringify({
+      type: "moodle.answer.result",
+      questionId: answer.questionId,
+      answerId: answer.answerId,
+      status: "ok",
+      payload: { appliedFieldCount: 1 }
+    }));
+
+    const result = await resultMessage;
+    assert.equal(result.status, "ok");
+    assert.equal(result.payload.appliedFieldCount, 1);
+  } finally {
+    for (const socket of sockets) {
+      socket.close();
+    }
+    await close(service.server);
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  }
+});

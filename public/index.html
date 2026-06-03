@@ -40,9 +40,31 @@
               </div>
             </header>
 
-            <div class="preview">
-              <img id="screenshot" alt="Latest screenshot">
-              <p id="screenshotEmpty">No screenshot yet</p>
+            <div class="session-main">
+              <div class="preview">
+                <img id="screenshot" alt="Latest screenshot">
+                <p id="screenshotEmpty">No screenshot yet</p>
+              </div>
+
+              <section class="moodle-panel" aria-label="Moodle question">
+                <header class="panel-header">
+                  <div>
+                    <h3>Moodle question</h3>
+                    <p id="moodleMeta">No question yet</p>
+                  </div>
+                  <button id="refreshMoodleQuestions" type="button">Refresh</button>
+                </header>
+                <div id="moodleQuestionEmpty" class="moodle-empty">No Moodle question yet</div>
+                <div id="moodleQuestionPane" class="moodle-question-pane" hidden>
+                  <select id="moodleQuestionSelect" aria-label="Moodle question"></select>
+                  <iframe id="moodleQuestionFrame" class="moodle-question-frame" sandbox="allow-same-origin" title="Moodle question"></iframe>
+                  <div id="moodleAnswerFields" class="moodle-answer-fields"></div>
+                  <div class="moodle-actions">
+                    <button id="sendMoodleAnswers" class="primary" type="button">Send answers</button>
+                    <span id="moodleAnswerStatus"></span>
+                  </div>
+                </div>
+              </section>
             </div>
 
             <section class="chat">

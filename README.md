@@ -9,11 +9,15 @@ Implemented contract:
 - `POST /v1/extension/sessions`
 - `PATCH /v1/extension/sessions/:sessionId/heartbeat`
 - `POST /v1/extension/sessions/:sessionId/screenshots`
+- `POST /v1/extension/sessions/:sessionId/moodle/questions`
 - `PATCH /v1/extension/sessions/:sessionId/close`
 - `GET /v1/operator/sessions`
 - `GET /v1/operator/sessions/:sessionId`
 - `GET /v1/operator/sessions/:sessionId/screenshots/latest`
 - `POST /v1/operator/sessions/:sessionId/messages`
+- `GET /v1/operator/sessions/:sessionId/moodle/questions`
+- `GET /v1/operator/sessions/:sessionId/moodle/questions/:questionId`
+- `POST /v1/operator/sessions/:sessionId/moodle/questions/:questionId/answers`
 - `POST /v1/operator/sessions/:sessionId/commands`
 - `WS /v1/extension/ws?sessionId=...`
 - `WS /v1/operator/ws`
@@ -25,6 +29,8 @@ the default operator session list only returns active sessions.
 Operators cannot claim sessions and cannot open or close the extension chat.
 Operator messages can include `operatorDisplayName`; the extension receives the
 same value in `operator.message`.
+
+Moodle question transfer is described in `MOODLE_QUESTION_CONTRACT.md`.
 
 ## Local Run
 

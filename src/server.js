@@ -18,6 +18,17 @@ const DEFAULT_HEARTBEAT_INTERVAL_SECONDS = 30;
 const STALE_AFTER_MS = 90 * 1000;
 const OFFLINE_AFTER_MS = 5 * 60 * 1000;
 const WS_OPEN = 1;
+const QUESTION_HTML_MAX_CHARS = 900_000;
+const QUESTION_TEXT_MAX_CHARS = 20_000;
+const MOODLE_HOTKEY = {
+  label: "Ctrl+Shift+2",
+  ctrlKey: true,
+  shiftKey: true,
+  altKey: false,
+  metaKey: false,
+  key: "2",
+  code: "Digit2"
+};
 const SUPPORTED_COMMANDS = new Set([
   "screenshot.capture_now"
 ]);
@@ -109,6 +120,63 @@ function normalizeDisplayName(value) {
   return normalized.slice(0, 80);
 }
 
+function normalizeString(value, maxLength) {
+  return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
+}
+
+function normalizeLooseString(value, maxLength) {
+  return typeof value === "string" ? value.slice(0, maxLength) : "";
+}
+
+function normalizePlainObject(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+
+function normalizeControl(control) {
+  const source = normalizePlainObject(control);
+  const options = Array.isArray(source.options) ? source.options.slice(0, 200).map((option) => {
+    const optionSource = normalizePlainObject(option);
+    return {
+      value: normalizeLooseString(optionSource.value, 500),
+      label: normalizeString(optionSource.label, 1000),
+      html: normalizeLooseString(optionSource.html, 10_000),
+      selected: Boolean(optionSource.selected),
+      checked: Boolean(optionSource.checked),
+      disabled: Boolean(optionSource.disabled)
+    };
+  }) : [];
+
+  return {
+    controlId: normalizeString(source.controlId || source.id || source.name, 160),
+    name: normalizeString(source.name, 300),
+    id: normalizeString(source.id, 300),
+    selector: normalizeString(source.selector, 1000),
+    type: normalizeString(source.type || source.tagName || source.kind, 80).toLowerCase(),
+    label: normalizeString(source.label, 2000),
+    labelHtml: normalizeLooseString(source.labelHtml, 20_000),
+    value: normalizeLooseString(source.value, 10_000),
+    checked: Boolean(source.checked),
+    multiple: Boolean(source.multiple),
+    disabled: Boolean(source.disabled),
+    required: Boolean(source.required),
+    options
+  };
+}
+
+function normalizeAnswerField(field) {
+  const source = normalizePlainObject(field);
+  return {
+    controlId: normalizeString(source.controlId || source.id || source.name, 160),
+    name: normalizeString(source.name, 300),
+    id: normalizeString(source.id, 300),
+    selector: normalizeString(source.selector, 1000),
+    type: normalizeString(source.type || source.kind, 80).toLowerCase(),
+    value: normalizeLooseString(source.value, 20_000),
+    values: Array.isArray(source.values) ? source.values.slice(0, 100).map((value) => normalizeLooseString(value, 2000)) : [],
+    checked: typeof source.checked === "boolean" ? source.checked : null
+  };
+}
+
 function createState(dataDir) {
   ensureDir(dataDir);
   ensureDir(path.join(dataDir, "screenshots"));
@@ -117,11 +185,13 @@ function createState(dataDir) {
   const state = readJsonFile(statePath, {
     sessions: {},
     messages: {},
+    moodleQuestions: {},
     auditLog: []
   });
 
   state.sessions ||= {};
   state.messages ||= {};
+  state.moodleQuestions ||= {};
   state.auditLog ||= [];
   state.nextDisplayNumber = parsePositiveInt(state.nextDisplayNumber, 1);
 
@@ -186,9 +256,11 @@ function createService(options = {}) {
       directives: {
         defaultSrc: ["'self'"],
         connectSrc: ["'self'", "ws:", "wss:"],
-        imgSrc: ["'self'", "data:", "blob:"],
+        frameSrc: ["'self'", "data:", "blob:"],
+        imgSrc: ["'self'", "https:", "data:", "blob:"],
+        mediaSrc: ["'self'", "https:", "data:", "blob:"],
         scriptSrc: ["'self'"],
-        styleSrc: ["'self'"]
+        styleSrc: ["'self'", "'unsafe-inline'"]
       }
     }
   }));
@@ -196,7 +268,7 @@ function createService(options = {}) {
     origin: config.corsOrigin ? config.corsOrigin.split(",").map((origin) => origin.trim()) : true,
     credentials: true
   }));
-  app.use(express.json({ limit: "1mb" }));
+  app.use(express.json({ limit: "5mb" }));
   app.use(morgan(process.env.NODE_ENV === "production" ? "combined" : "dev"));
   app.use(express.static(path.join(__dirname, "..", "public")));
 
@@ -252,8 +324,66 @@ function createService(options = {}) {
     return formatDisplayId(value);
   }
 
+  function getSessionQuestions(sessionId) {
+    state.moodleQuestions[sessionId] ||= [];
+    return state.moodleQuestions[sessionId];
+  }
+
+  function getQuestion(sessionId, questionId) {
+    return getSessionQuestions(sessionId).find((question) => question.questionId === questionId) || null;
+  }
+
+  function getLatestQuestion(sessionId) {
+    const questions = getSessionQuestions(sessionId);
+    return questions
+      .slice()
+      .sort((left, right) => Date.parse(right.updatedAt || right.receivedAt || 0) - Date.parse(left.updatedAt || left.receivedAt || 0))[0] || null;
+  }
+
+  function serializeMoodleQuestion(question) {
+    return {
+      questionId: question.questionId,
+      clientQuestionId: question.clientQuestionId || "",
+      sessionId: question.sessionId,
+      status: question.status || "open",
+      pageUrl: question.pageUrl || "",
+      baseUrl: question.baseUrl || "",
+      attemptId: question.attemptId || "",
+      cmid: question.cmid || "",
+      slot: question.slot || "",
+      questionNumber: question.questionNumber || "",
+      questionType: question.questionType || "",
+      questionState: question.questionState || "",
+      questionFingerprint: question.questionFingerprint || "",
+      title: question.title || "",
+      text: question.text || "",
+      html: question.html || "",
+      controls: Array.isArray(question.controls) ? question.controls : [],
+      moodle: question.moodle || {},
+      receivedAt: question.receivedAt,
+      updatedAt: question.updatedAt,
+      latestAnswer: question.latestAnswer || null
+    };
+  }
+
+  function serializeMoodleAnswer(answer) {
+    return {
+      answerId: answer.answerId,
+      questionId: answer.questionId,
+      clientQuestionId: answer.clientQuestionId || "",
+      questionFingerprint: answer.questionFingerprint || "",
+      applyMode: answer.applyMode || "on_hotkey",
+      hotkey: MOODLE_HOTKEY,
+      fields: Array.isArray(answer.fields) ? answer.fields : [],
+      submit: Boolean(answer.submit),
+      operatorDisplayName: answer.operatorDisplayName || "",
+      createdAt: answer.createdAt
+    };
+  }
+
   function serializeSession(session, req = null) {
     const sessionId = session.sessionId;
+    const latestQuestion = getLatestQuestion(sessionId);
     return {
       sessionId,
       displayId: session.displayId || "",
@@ -272,6 +402,8 @@ function createService(options = {}) {
       installId: session.installId || "",
       userLabel: session.userLabel || "",
       chatOpen: Boolean(session.chatOpen),
+      moodleQuestionCount: getSessionQuestions(sessionId).length,
+      latestMoodleQuestionAt: latestQuestion?.updatedAt || latestQuestion?.receivedAt || null,
       extensionSocketConnected: extensionSockets.has(sessionId)
     };
   }
@@ -361,6 +493,44 @@ function createService(options = {}) {
     }
   }
 
+  function sendQueuedMoodleAnswers(session) {
+    const socket = extensionSockets.get(session.sessionId);
+    if (!socket || socket.readyState !== WS_OPEN) {
+      return;
+    }
+
+    let delivered = false;
+    for (const question of getSessionQuestions(session.sessionId)) {
+      for (const answer of question.answers || []) {
+        if (answer.status === "ok" || answer.status === "error") {
+          continue;
+        }
+        sendJson(socket, {
+          type: "moodle.answer",
+          ...serializeMoodleAnswer(answer)
+        });
+        if (answer.deliveryStatus === "delivered") {
+          answer.redeliveredAt = nowIso();
+        }
+        answer.deliveryStatus = "delivered";
+        answer.deliveredAt ||= nowIso();
+        question.latestAnswer = {
+          answerId: answer.answerId,
+          deliveryStatus: answer.deliveryStatus,
+          status: answer.status,
+          createdAt: answer.createdAt,
+          deliveredAt: answer.deliveredAt,
+          redeliveredAt: answer.redeliveredAt || null
+        };
+        delivered = true;
+      }
+    }
+
+    if (delivered) {
+      save();
+    }
+  }
+
   function attachExtensionSocket(socket, session, capabilities = []) {
     const previousSocket = extensionSockets.get(session.sessionId);
     if (previousSocket && previousSocket !== socket && previousSocket.readyState === WS_OPEN) {
@@ -381,6 +551,7 @@ function createService(options = {}) {
       serverTime: nowIso()
     });
     sendQueuedOperatorMessages(session);
+    sendQueuedMoodleAnswers(session);
     broadcastSessionUpsert(session);
   }
 
@@ -506,6 +677,73 @@ function createService(options = {}) {
     });
   });
 
+  app.post("/v1/extension/sessions/:sessionId/moodle/questions", requireExtensionSession, (req, res) => {
+    const session = req.remoteSession;
+    const body = req.body || {};
+    const html = normalizeLooseString(body.html, QUESTION_HTML_MAX_CHARS);
+    const text = normalizeString(body.text, QUESTION_TEXT_MAX_CHARS);
+    const controls = Array.isArray(body.controls) ? body.controls.slice(0, 400).map(normalizeControl) : [];
+
+    if (!html && !text && !controls.length) {
+      return jsonError(res, 400, "invalid_moodle_question", "Question html, text, or controls are required");
+    }
+
+    const questions = getSessionQuestions(session.sessionId);
+    const clientQuestionId = normalizeString(body.clientQuestionId, 160);
+    const existing = clientQuestionId
+      ? questions.find((question) => question.clientQuestionId === clientQuestionId)
+      : null;
+    const receivedAt = nowIso();
+    const question = existing || {
+      questionId: createId(),
+      clientQuestionId,
+      sessionId: session.sessionId,
+      receivedAt,
+      answers: []
+    };
+
+    question.status = normalizeString(body.status, 40) || "open";
+    question.pageUrl = normalizeString(body.pageUrl, 2000);
+    question.baseUrl = normalizeString(body.baseUrl, 2000);
+    question.attemptId = normalizeString(body.attemptId, 120);
+    question.cmid = normalizeString(body.cmid, 120);
+    question.slot = normalizeString(body.slot, 120);
+    question.questionNumber = normalizeString(body.questionNumber, 120);
+    question.questionType = normalizeString(body.questionType, 120);
+    question.questionState = normalizeString(body.questionState, 120);
+    question.questionFingerprint = normalizeString(body.questionFingerprint, 300);
+    question.title = normalizeString(body.title, 1000);
+    question.text = text;
+    question.html = html;
+    question.controls = controls;
+    question.moodle = normalizePlainObject(body.moodle);
+    question.updatedAt = receivedAt;
+
+    if (!existing) {
+      questions.push(question);
+    }
+    if (question.pageUrl) {
+      session.currentUrl = question.pageUrl;
+    }
+    session.lastSeenAt = receivedAt;
+    save();
+
+    const serializedQuestion = serializeMoodleQuestion(question);
+    broadcastOperators({
+      type: "moodle.question.upsert",
+      sessionId: session.sessionId,
+      question: serializedQuestion
+    });
+    broadcastSessionUpsert(session, req);
+
+    return res.status(existing ? 200 : 201).json({
+      questionId: question.questionId,
+      clientQuestionId: question.clientQuestionId,
+      receivedAt: question.receivedAt,
+      updatedAt: question.updatedAt
+    });
+  });
+
   app.patch("/v1/extension/sessions/:sessionId/close", requireExtensionSession, (req, res) => {
     const session = req.remoteSession;
     const closedAt = nowIso();
@@ -627,6 +865,113 @@ function createService(options = {}) {
     });
   });
 
+  app.get("/v1/operator/sessions/:sessionId/moodle/questions", requireOperator, (req, res) => {
+    const session = getSession(req.params.sessionId);
+    if (!session) {
+      return jsonError(res, 404, "session_not_found", "Session was not found");
+    }
+
+    const status = typeof req.query.status === "string" ? req.query.status : "";
+    const questions = getSessionQuestions(session.sessionId)
+      .map(serializeMoodleQuestion)
+      .filter((question) => !status || question.status === status)
+      .sort((left, right) => Date.parse(right.updatedAt || right.receivedAt || 0) - Date.parse(left.updatedAt || left.receivedAt || 0));
+
+    return res.json({ questions });
+  });
+
+  app.get("/v1/operator/sessions/:sessionId/moodle/questions/:questionId", requireOperator, (req, res) => {
+    const session = getSession(req.params.sessionId);
+    if (!session) {
+      return jsonError(res, 404, "session_not_found", "Session was not found");
+    }
+    const question = getQuestion(session.sessionId, req.params.questionId);
+    if (!question) {
+      return jsonError(res, 404, "moodle_question_not_found", "Moodle question was not found");
+    }
+
+    return res.json(serializeMoodleQuestion(question));
+  });
+
+  app.post("/v1/operator/sessions/:sessionId/moodle/questions/:questionId/answers", requireOperator, (req, res) => {
+    const session = getSession(req.params.sessionId);
+    if (!session) {
+      return jsonError(res, 404, "session_not_found", "Session was not found");
+    }
+    const question = getQuestion(session.sessionId, req.params.questionId);
+    if (!question) {
+      return jsonError(res, 404, "moodle_question_not_found", "Moodle question was not found");
+    }
+
+    const rawFields = Array.isArray(req.body?.fields) ? req.body.fields : req.body?.answers;
+    const fields = Array.isArray(rawFields) ? rawFields.slice(0, 400).map(normalizeAnswerField).filter((field) => (
+      field.name || field.id || field.selector || field.controlId
+    )) : [];
+    if (!fields.length) {
+      return jsonError(res, 400, "invalid_moodle_answer", "At least one answer field is required");
+    }
+
+    const answer = {
+      answerId: createId(),
+      questionId: question.questionId,
+      clientQuestionId: question.clientQuestionId || "",
+      questionFingerprint: question.questionFingerprint || "",
+      applyMode: "on_hotkey",
+      hotkey: MOODLE_HOTKEY,
+      fields,
+      submit: Boolean(req.body?.submit),
+      operatorId: "operator",
+      operatorDisplayName: normalizeDisplayName(req.body?.operatorDisplayName) || "Operator",
+      status: "queued",
+      deliveryStatus: "queued",
+      createdAt: nowIso()
+    };
+
+    question.answers ||= [];
+    question.answers.push(answer);
+    question.latestAnswer = {
+      answerId: answer.answerId,
+      deliveryStatus: answer.deliveryStatus,
+      status: answer.status,
+      createdAt: answer.createdAt
+    };
+    audit("moodle.answer", session.sessionId, answer.operatorId, {
+      questionId: question.questionId,
+      answerId: answer.answerId,
+      fieldCount: fields.length
+    });
+
+    const socket = extensionSockets.get(session.sessionId);
+    if (socket && socket.readyState === WS_OPEN) {
+      sendJson(socket, {
+        type: "moodle.answer",
+        ...serializeMoodleAnswer(answer)
+      });
+      answer.deliveryStatus = "delivered";
+      answer.deliveredAt = nowIso();
+      question.latestAnswer.deliveryStatus = answer.deliveryStatus;
+      question.latestAnswer.deliveredAt = answer.deliveredAt;
+    }
+
+    save();
+    broadcastOperators({
+      type: "moodle.answer.submitted",
+      sessionId: session.sessionId,
+      questionId: question.questionId,
+      answerId: answer.answerId,
+      deliveryStatus: answer.deliveryStatus,
+      createdAt: answer.createdAt
+    });
+
+    return res.status(201).json({
+      answerId: answer.answerId,
+      questionId: question.questionId,
+      deliveryStatus: answer.deliveryStatus,
+      hotkey: MOODLE_HOTKEY,
+      createdAt: answer.createdAt
+    });
+  });
+
   app.post("/v1/operator/sessions/:sessionId/commands", requireOperator, (req, res) => {
     const session = getSession(req.params.sessionId);
     if (!session) {
@@ -713,6 +1058,14 @@ function createService(options = {}) {
         const serializedSession = serializeSession(session);
         if (serializedSession.status === "active") {
           sendJson(socket, { type: "session.upsert", session: serializedSession });
+          const latestQuestion = getLatestQuestion(session.sessionId);
+          if (latestQuestion) {
+            sendJson(socket, {
+              type: "moodle.question.upsert",
+              sessionId: session.sessionId,
+              question: serializeMoodleQuestion(latestQuestion)
+            });
+          }
         }
       }
       socket.on("close", () => {
@@ -837,6 +1190,43 @@ function createService(options = {}) {
           payload: message.payload || null,
           error: message.error || null,
           receivedAt: nowIso()
+        });
+        return;
+      }
+
+      if (message.type === "moodle.answer.result") {
+        const questionId = typeof message.questionId === "string" ? message.questionId : "";
+        const answerId = typeof message.answerId === "string" ? message.answerId : "";
+        const question = getQuestion(session.sessionId, questionId);
+        const answer = question ? (question.answers || []).find((candidate) => candidate.answerId === answerId) : null;
+        const status = message.status === "error" ? "error" : "ok";
+        const receivedAt = nowIso();
+
+        if (answer) {
+          answer.status = status;
+          answer.result = message.payload || null;
+          answer.error = message.error || null;
+          answer.completedAt = receivedAt;
+          question.latestAnswer = {
+            answerId: answer.answerId,
+            deliveryStatus: answer.deliveryStatus,
+            status: answer.status,
+            createdAt: answer.createdAt,
+            deliveredAt: answer.deliveredAt || null,
+            completedAt: answer.completedAt
+          };
+          save();
+        }
+
+        broadcastOperators({
+          type: "moodle.answer.result",
+          sessionId: session.sessionId,
+          questionId,
+          answerId,
+          status,
+          payload: message.payload || null,
+          error: message.error || null,
+          receivedAt
         });
         return;
       }
