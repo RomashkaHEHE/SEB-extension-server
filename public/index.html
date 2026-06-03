@@ -40,21 +40,28 @@
               </div>
             </header>
 
-            <div class="detail-body">
-              <section class="chat">
-                <div id="messages" class="messages"></div>
-                <form id="messageForm" class="message-form">
-                  <textarea id="messageText" name="messageText" autocomplete="off" rows="3" placeholder="Message to extension user"></textarea>
-                  <button type="submit">Send</button>
-                </form>
-              </section>
+            <nav class="session-tabs" role="tablist" aria-label="Session views">
+              <button id="liveTab" class="session-tab active" type="button" role="tab" aria-selected="true" aria-controls="liveView" data-session-tab="live">Chat + screen</button>
+              <button id="moodleTab" class="session-tab" type="button" role="tab" aria-selected="false" aria-controls="moodleView" data-session-tab="moodle">Question page</button>
+            </nav>
 
-              <div class="session-main">
+            <div class="detail-body">
+              <section id="liveView" class="session-view live-view" role="tabpanel" aria-labelledby="liveTab">
+                <section class="chat">
+                  <div id="messages" class="messages"></div>
+                  <form id="messageForm" class="message-form">
+                    <textarea id="messageText" name="messageText" autocomplete="off" rows="3" placeholder="Message to extension user"></textarea>
+                    <button type="submit">Send</button>
+                  </form>
+                </section>
+
                 <div class="preview">
                   <img id="screenshot" alt="Latest screenshot">
                   <p id="screenshotEmpty">No screenshot yet</p>
                 </div>
+              </section>
 
+              <section id="moodleView" class="session-view moodle-view" role="tabpanel" aria-labelledby="moodleTab" hidden>
                 <section class="moodle-panel" aria-label="Moodle question">
                   <header class="panel-header">
                     <div>
@@ -74,7 +81,7 @@
                     </div>
                   </div>
                 </section>
-              </div>
+              </section>
             </div>
           </article>
         </section>

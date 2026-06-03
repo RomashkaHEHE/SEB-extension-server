@@ -4,6 +4,8 @@ const state = {
   moodleQuestions: new Map(),
   selectedSessionId: "",
   selectedMoodleQuestionId: "",
+  activeSessionTab: "live",
+  renderedMessageKeys: new Set(),
   socket: null,
   screenshotObjectUrl: ""
 };
@@ -18,6 +20,10 @@ const els = {
   sessionDetail: document.getElementById("sessionDetail"),
   detailTitle: document.getElementById("detailTitle"),
   detailMeta: document.getElementById("detailMeta"),
+  liveTab: document.getElementById("liveTab"),
+  moodleTab: document.getElementById("moodleTab"),
+  liveView: document.getElementById("liveView"),
+  moodleView: document.getElementById("moodleView"),
   screenshot: document.getElementById("screenshot"),
   screenshotEmpty: document.getElementById("screenshotEmpty"),
   captureNow: document.getElementById("captureNow"),
@@ -122,10 +128,27 @@ function renderSessions() {
   renderDetail();
 }
 
+function renderSessionTabs() {
+  const tabs = [
+    { name: "live", button: els.liveTab, panel: els.liveView },
+    { name: "moodle", button: els.moodleTab, panel: els.moodleView }
+  ];
+  for (const tab of tabs) {
+    const active = state.activeSessionTab === tab.name;
+    tab.button.classList.toggle("active", active);
+    tab.button.setAttribute("aria-selected", active ? "true" : "false");
+    tab.panel.hidden = !active;
+  }
+  if (state.activeSessionTab === "moodle") {
+    window.setTimeout(syncMoodleAnswerFallback, 0);
+  }
+}
+
 function renderDetail() {
   const session = state.sessions.get(state.selectedSessionId);
   els.emptyState.hidden = Boolean(session);
   els.sessionDetail.hidden = !session;
+  renderSessionTabs();
   if (!session) {
     state.moodleQuestions = new Map();
     state.selectedMoodleQuestionId = "";
@@ -190,7 +213,7 @@ async function loadMessages() {
     return;
   }
   const payload = await api(`/v1/operator/sessions/${state.selectedSessionId}/messages`);
-  els.messages.innerHTML = "";
+  resetMessages();
   for (const message of payload.messages) {
     appendMessage(message);
   }
@@ -234,6 +257,7 @@ function renderMoodleQuestion() {
     els.moodleAnswerStatus.textContent = "";
     els.moodleQuestionFrame.removeAttribute("srcdoc");
     els.moodleAnswerFields.innerHTML = "";
+    els.moodleAnswerFields.hidden = false;
     return;
   }
 
@@ -247,28 +271,235 @@ function renderMoodleQuestion() {
     : "";
   els.moodleQuestionFrame.srcdoc = buildMoodleQuestionDocument(question);
   renderMoodleAnswerFields(question);
+  syncMoodleAnswerFallback();
+}
+
+function getMoodleQuestionBodyHtml(question) {
+  if (question.html) {
+    try {
+      const parsed = new DOMParser().parseFromString(question.html, "text/html");
+      const parsedBody = parsed.body?.innerHTML?.trim();
+      if (parsedBody) {
+        return parsedBody;
+      }
+    } catch {
+      return question.html;
+    }
+    return question.html;
+  }
+
+  return `
+    <div class="que">
+      <div class="content">
+        <div class="formulation">
+          <div class="qtext">${escapeHtml(question.text || "")}</div>
+        </div>
+      </div>
+    </div>
+  `;
 }
 
 function buildMoodleQuestionDocument(question) {
   const baseHref = question.baseUrl || question.pageUrl || "";
-  const body = question.html || `<pre>${escapeHtml(question.text || "")}</pre>`;
+  const body = getMoodleQuestionBodyHtml(question);
   return `<!doctype html>
 <html>
   <head>
     <meta charset="utf-8">
     <base href="${escapeAttribute(baseHref)}">
     <style>
-      body { margin: 12px; color: #17201d; font: 14px/1.45 Arial, sans-serif; }
-      img, video { max-width: 100%; height: auto; }
-      audio { width: 100%; max-width: 420px; }
-      table { max-width: 100%; border-collapse: collapse; }
-      input, select, textarea, button { font: inherit; }
-      .que { max-width: 100%; }
-      .info { color: #65706a; font-size: 12px; margin-bottom: 8px; }
-      .answer div, .r0, .r1 { margin: 6px 0; }
+      :root { color-scheme: light; }
+      * { box-sizing: border-box; }
+      html, body { min-height: 100%; }
+      body {
+        margin: 0;
+        background: #f7f8fa;
+        color: #1d2125;
+        font: 15px/1.5 Arial, "Helvetica Neue", sans-serif;
+      }
+      .moodle-question-root {
+        min-height: 100vh;
+        padding: 18px;
+      }
+      img, video {
+        max-width: 100%;
+        height: auto;
+      }
+      audio {
+        width: 100%;
+        max-width: 420px;
+      }
+      table {
+        max-width: 100%;
+        border-collapse: collapse;
+      }
+      th, td {
+        padding: 0.45rem 0.55rem;
+        border: 1px solid #dee2e6;
+        vertical-align: top;
+      }
+      input, select, textarea, button {
+        font: inherit;
+      }
+      input:not([type]),
+      input[type="text"],
+      input[type="number"],
+      input[type="email"],
+      input[type="search"],
+      select,
+      textarea {
+        max-width: 100%;
+        min-height: 36px;
+        border: 1px solid #8f959e;
+        border-radius: 4px;
+        background: #ffffff;
+        color: #1d2125;
+        padding: 0.35rem 0.55rem;
+      }
+      textarea {
+        min-height: 92px;
+        resize: vertical;
+      }
+      input[type="radio"],
+      input[type="checkbox"] {
+        width: auto;
+        min-height: 0;
+        margin: 0.2rem 0.45rem 0.2rem 0;
+        vertical-align: middle;
+      }
+      label {
+        cursor: pointer;
+      }
+      .que {
+        width: min(100%, 1080px);
+        margin: 0 auto 1rem;
+        display: grid;
+        grid-template-columns: minmax(112px, 8.5rem) minmax(0, 1fr);
+        gap: 1rem;
+      }
+      .que .info {
+        align-self: start;
+        border: 1px solid #dee2e6;
+        border-radius: 4px;
+        background: #ffffff;
+        color: #495057;
+        padding: 0.75rem;
+        font-size: 0.875rem;
+      }
+      .que .info .no,
+      .que .info .state,
+      .que .info .grade {
+        margin: 0 0 0.35rem;
+      }
+      .que .content {
+        min-width: 0;
+      }
+      .que .formulation,
+      .que .outcome,
+      .que .comment,
+      .que .history,
+      .que .im-controls {
+        border: 1px solid #dee2e6;
+        border-radius: 4px;
+        background: #ffffff;
+        padding: 1rem;
+        margin: 0 0 1rem;
+      }
+      .que .formulation {
+        background: #f8fbff;
+        border-color: #cfe2ff;
+      }
+      .qtext {
+        margin: 0 0 1rem;
+        font-size: 1rem;
+      }
+      .ablock,
+      .answer {
+        margin: 0.85rem 0 0;
+      }
+      .answer .r0,
+      .answer .r1,
+      .answer > div,
+      .subquestion {
+        margin: 0.35rem 0;
+        padding: 0.38rem 0.5rem;
+        border-radius: 4px;
+      }
+      .answer .r0:hover,
+      .answer .r1:hover,
+      .answer > div:hover,
+      .subquestion:hover {
+        background: rgba(13, 110, 253, 0.06);
+      }
+      .prompt,
+      .specificfeedback,
+      .generalfeedback,
+      .rightanswer {
+        color: #495057;
+        margin: 0.5rem 0;
+      }
+      .accesshide,
+      .sr-only {
+        position: absolute !important;
+        width: 1px !important;
+        height: 1px !important;
+        overflow: hidden !important;
+        clip: rect(0, 0, 0, 0) !important;
+        white-space: nowrap !important;
+      }
+      .d-flex { display: flex; }
+      .flex-wrap { flex-wrap: wrap; }
+      .align-items-center { align-items: center; }
+      .gap-1 { gap: 0.25rem; }
+      .gap-2 { gap: 0.5rem; }
+      .draghome,
+      .drag,
+      .dragitem,
+      .draggable,
+      .dragproxy,
+      .place,
+      .drop,
+      .dropzone {
+        display: inline-block;
+        min-width: 2.5rem;
+        min-height: 2rem;
+        margin: 0.2rem;
+        padding: 0.35rem 0.55rem;
+        border: 1px solid #adb5bd;
+        border-radius: 4px;
+        background: #ffffff;
+        vertical-align: middle;
+      }
+      .drop,
+      .dropzone,
+      .place {
+        border-style: dashed;
+        background: #f1f3f5;
+      }
+      .matching select,
+      .match select,
+      .multianswer select {
+        min-width: 12rem;
+      }
+      .correct,
+      .rightanswer {
+        border-color: #badbcc;
+        background: #f0fff4;
+      }
+      .incorrect {
+        border-color: #f1aeb5;
+        background: #fff5f5;
+      }
+      @media (max-width: 760px) {
+        .moodle-question-root { padding: 12px; }
+        .que {
+          grid-template-columns: 1fr;
+          gap: 0.6rem;
+        }
+      }
     </style>
   </head>
-  <body>${body}</body>
+  <body><main class="moodle-question-root">${body}</main></body>
 </html>`;
 }
 
@@ -283,6 +514,7 @@ function escapeAttribute(value) {
 }
 
 function renderMoodleAnswerFields(question) {
+  els.moodleAnswerFields.hidden = false;
   els.moodleAnswerFields.innerHTML = "";
   const controls = Array.isArray(question.controls) ? question.controls.filter((control) => (
     control && (control.name || control.id || control.controlId)
@@ -446,25 +678,37 @@ function isMoodleHousekeepingField(name, type) {
 }
 
 function collectMoodleAnswerFields() {
-  const editorFields = collectMoodleEditorAnswerFields();
-  if (editorFields.length) {
-    return editorFields;
+  const frameFields = collectMoodleFrameAnswerFields();
+  if (frameFields.length) {
+    return frameFields;
   }
+  return collectMoodleEditorAnswerFields();
+}
 
+function getMoodleFrameAnswerElements() {
   const frameDocument = els.moodleQuestionFrame.contentDocument;
   if (!frameDocument) {
     return [];
   }
+  return Array.from(frameDocument.querySelectorAll("input[name], select[name], textarea[name]"))
+    .filter((element) => {
+      const tagName = element.tagName.toLowerCase();
+      const type = (element.getAttribute("type") || tagName).toLowerCase();
+      const name = element.getAttribute("name") || "";
+      return !element.disabled && !isMoodleHousekeepingField(name, type);
+    });
+}
 
+function syncMoodleAnswerFallback() {
+  els.moodleAnswerFields.hidden = getMoodleFrameAnswerElements().length > 0;
+}
+
+function collectMoodleFrameAnswerFields() {
   const fields = [];
-  const elements = Array.from(frameDocument.querySelectorAll("input[name], select[name], textarea[name]"));
+  const elements = getMoodleFrameAnswerElements();
   for (const element of elements) {
     const tagName = element.tagName.toLowerCase();
     const type = (element.getAttribute("type") || tagName).toLowerCase();
-    const name = element.getAttribute("name") || "";
-    if (element.disabled || isMoodleHousekeepingField(name, type)) {
-      continue;
-    }
     if (type === "radio") {
       if (!element.checked) {
         continue;
@@ -529,7 +773,37 @@ function createAnswerField(element, type, value, checked) {
   };
 }
 
+function resetMessages() {
+  state.renderedMessageKeys = new Set();
+  els.messages.innerHTML = "";
+}
+
+function getMessageKeys(message) {
+  const keys = [];
+  if (message.messageId) {
+    keys.push(`message:${message.messageId}`);
+  }
+  if (message.clientMessageId) {
+    keys.push(`client:${message.clientMessageId}`);
+  }
+  if (!keys.length) {
+    keys.push(`fallback:${message.sender || ""}:${message.createdAt || ""}:${message.text || ""}`);
+  }
+  return keys;
+}
+
 function appendMessage(message) {
+  const keys = getMessageKeys(message);
+  if (keys.some((key) => state.renderedMessageKeys.has(key))) {
+    for (const key of keys) {
+      state.renderedMessageKeys.add(key);
+    }
+    return;
+  }
+  for (const key of keys) {
+    state.renderedMessageKeys.add(key);
+  }
+
   const row = document.createElement("div");
   row.className = `message ${message.sender === "operator" ? "operator" : "extension"}`;
   const sender = message.sender === "operator"
@@ -578,7 +852,7 @@ function connectSocket() {
         state.sessions.delete(message.session.sessionId);
         if (state.selectedSessionId === message.session.sessionId) {
           state.selectedSessionId = "";
-          els.messages.innerHTML = "";
+          resetMessages();
         }
       }
       renderSessions();
@@ -624,9 +898,20 @@ els.refreshMoodleQuestions.addEventListener("click", () => {
   loadMoodleQuestions().catch(showError);
 });
 
+for (const tabButton of [els.liveTab, els.moodleTab]) {
+  tabButton.addEventListener("click", () => {
+    state.activeSessionTab = tabButton.dataset.sessionTab || "live";
+    renderSessionTabs();
+  });
+}
+
 els.moodleQuestionSelect.addEventListener("change", () => {
   state.selectedMoodleQuestionId = els.moodleQuestionSelect.value;
   renderMoodleQuestion();
+});
+
+els.moodleQuestionFrame.addEventListener("load", () => {
+  syncMoodleAnswerFallback();
 });
 
 els.displayNameForm.addEventListener("submit", (event) => {
@@ -679,15 +964,40 @@ els.messageForm.addEventListener("submit", async (event) => {
   if (!text) {
     return;
   }
-  await api(`/v1/operator/sessions/${state.selectedSessionId}/messages`, {
-    method: "POST",
-    body: JSON.stringify({
-      clientMessageId: crypto.randomUUID(),
-      text,
-      operatorDisplayName: state.displayName || "Operator"
-    })
+  const selectedSessionId = state.selectedSessionId;
+  const clientMessageId = crypto.randomUUID();
+  const operatorDisplayName = state.displayName || "Operator";
+  appendMessage({
+    clientMessageId,
+    sessionId: selectedSessionId,
+    sender: "operator",
+    operatorDisplayName,
+    text,
+    createdAt: new Date().toISOString(),
+    deliveryStatus: "sending"
   });
   els.messageText.value = "";
+
+  try {
+    const payload = await api(`/v1/operator/sessions/${selectedSessionId}/messages`, {
+      method: "POST",
+      body: JSON.stringify({
+        clientMessageId,
+        text,
+        operatorDisplayName
+      })
+    });
+    appendMessage({
+      ...payload,
+      clientMessageId,
+      sessionId: selectedSessionId,
+      sender: "operator",
+      operatorDisplayName,
+      text
+    });
+  } catch (error) {
+    showError(error);
+  }
 });
 
 els.messageText.addEventListener("keydown", (event) => {

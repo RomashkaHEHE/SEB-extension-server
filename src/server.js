@@ -479,6 +479,7 @@ function createService(options = {}) {
         sendJson(socket, {
           type: "operator.message",
           messageId: message.messageId,
+          clientMessageId: message.clientMessageId,
           operatorId: message.operatorId,
           operatorDisplayName: message.operatorDisplayName || "",
           text: message.text,
@@ -839,6 +840,7 @@ function createService(options = {}) {
       sendJson(socket, {
         type: "operator.message",
         messageId: message.messageId,
+        clientMessageId: message.clientMessageId,
         operatorId: message.operatorId,
         operatorDisplayName: message.operatorDisplayName,
         text: message.text,
@@ -852,14 +854,21 @@ function createService(options = {}) {
       type: "chat.message",
       sessionId: session.sessionId,
       messageId: message.messageId,
+      clientMessageId: message.clientMessageId,
       sender: "operator",
       operatorDisplayName: message.operatorDisplayName,
       text: message.text,
-      createdAt: message.createdAt
+      createdAt: message.createdAt,
+      deliveryStatus: message.deliveryStatus
     });
 
     return res.status(201).json({
       messageId: message.messageId,
+      clientMessageId: message.clientMessageId,
+      sessionId: message.sessionId,
+      sender: message.sender,
+      operatorDisplayName: message.operatorDisplayName,
+      text: message.text,
       createdAt: message.createdAt,
       deliveryStatus: message.deliveryStatus
     });
@@ -1164,6 +1173,7 @@ function createService(options = {}) {
           type: "chat.message",
           sessionId: session.sessionId,
           messageId: chatMessage.messageId,
+          clientMessageId: chatMessage.clientMessageId,
           sender: "extension",
           operatorDisplayName: "",
           text: chatMessage.text,

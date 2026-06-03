@@ -228,7 +228,7 @@ textarea {
 .session-detail {
   min-height: 0;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr);
 }
 
 .detail-header {
@@ -248,16 +248,48 @@ textarea {
   gap: 8px;
 }
 
+.session-tabs {
+  min-width: 0;
+  display: flex;
+  gap: 6px;
+  padding: 8px 14px 0;
+  border-bottom: 1px solid var(--line);
+  background: #ffffff;
+}
+
+.session-tab {
+  min-height: 40px;
+  border-bottom-color: transparent;
+  border-radius: 6px 6px 0 0;
+  background: #f8faf8;
+}
+
+.session-tab.active {
+  border-color: var(--line);
+  border-bottom-color: #ffffff;
+  background: #ffffff;
+  color: var(--accent-strong);
+  font-weight: 650;
+  transform: translateY(1px);
+}
+
 .detail-body {
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(300px, 360px) minmax(0, 1fr);
 }
 
-.session-main {
+.session-view {
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(320px, 420px);
+}
+
+.live-view {
+  grid-template-columns: minmax(320px, 380px) minmax(0, 1fr);
+}
+
+.moodle-view {
+  min-width: 0;
+  background: #eef2ef;
 }
 
 .preview {
@@ -292,7 +324,6 @@ textarea {
   min-height: 0;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
-  border-left: 1px solid var(--line);
   background: #ffffff;
 }
 
@@ -442,18 +473,8 @@ textarea {
 }
 
 @media (max-width: 1120px) {
-  .detail-body {
+  .live-view {
     grid-template-columns: minmax(280px, 34vw) minmax(0, 1fr);
-  }
-
-  .session-main {
-    grid-template-columns: 1fr;
-    grid-template-rows: minmax(220px, 1fr) minmax(280px, 42vh);
-  }
-
-  .moodle-panel {
-    border-left: 0;
-    border-top: 1px solid var(--line);
   }
 }
 
@@ -483,14 +504,19 @@ textarea {
     flex-direction: column;
   }
 
-  .detail-body {
+  .session-tabs {
+    overflow-x: auto;
+    padding: 8px 10px 0;
+  }
+
+  .live-view {
     grid-template-columns: 1fr;
     grid-template-rows: minmax(220px, 32vh) minmax(0, 1fr);
   }
 
   .chat {
     border-right: 0;
-    border-top: 1px solid var(--line);
+    border-bottom: 1px solid var(--line);
   }
 
   .actions {

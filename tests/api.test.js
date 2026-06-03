@@ -201,7 +201,11 @@ test("extension websocket accepts hello and forwards chat messages to operators"
       })
     });
     assert.equal(operatorMessageResponse.status, 201);
+    const operatorMessageCreated = await operatorMessageResponse.json();
+    assert.equal(operatorMessageCreated.clientMessageId, "operator-client-message-1");
+    assert.equal(operatorMessageCreated.operatorDisplayName, "Roman");
     const operatorMessagePayload = await operatorMessage;
+    assert.equal(operatorMessagePayload.clientMessageId, "operator-client-message-1");
     assert.equal(operatorMessagePayload.operatorDisplayName, "Roman");
     assert.equal(operatorMessagePayload.text, "Здравствуйте.");
     assert.equal(Object.hasOwn(operatorMessagePayload, "openChat"), false);
@@ -224,6 +228,7 @@ test("extension websocket accepts hello and forwards chat messages to operators"
       message.type === "chat.message" && message.sessionId === created.sessionId
     ));
     assert.equal(forwarded.sender, "extension");
+    assert.equal(forwarded.clientMessageId, "client-message-1");
     assert.equal(forwarded.text, "Да, вижу.");
   } finally {
     for (const socket of sockets) {
