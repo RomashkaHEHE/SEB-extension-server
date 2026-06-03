@@ -118,41 +118,45 @@ textarea {
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
 }
 
 .session-list {
-  min-height: 0;
-  border-right: 1px solid var(--line);
+  min-width: 0;
+  border-bottom: 1px solid var(--line);
   background: #fbfcfa;
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
 }
 
 .list-toolbar {
-  min-height: 54px;
+  min-height: 72px;
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 10px;
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--line);
+  padding: 12px 14px 12px 18px;
+  border-right: 1px solid var(--line);
 }
 
 .sessions {
-  overflow: auto;
+  min-width: 0;
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  overflow-y: hidden;
   padding: 8px;
 }
 
 .session-item {
-  width: 100%;
-  min-height: 88px;
+  flex: 0 0 clamp(220px, 26vw, 340px);
+  min-height: 58px;
   display: grid;
-  gap: 5px;
+  gap: 4px;
   text-align: left;
   border-color: transparent;
   border-radius: 6px;
-  padding: 10px;
+  padding: 8px 10px;
   background: transparent;
 }
 
@@ -224,7 +228,7 @@ textarea {
 .session-detail {
   min-height: 0;
   display: grid;
-  grid-template-rows: auto minmax(240px, 1fr) minmax(180px, 260px);
+  grid-template-rows: auto minmax(0, 1fr);
 }
 
 .detail-header {
@@ -244,10 +248,16 @@ textarea {
   gap: 8px;
 }
 
+.detail-body {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(300px, 360px) minmax(0, 1fr);
+}
+
 .session-main {
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(340px, 440px);
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 420px);
 }
 
 .preview {
@@ -388,7 +398,7 @@ textarea {
   min-height: 0;
   display: grid;
   grid-template-rows: minmax(0, 1fr) auto;
-  border-top: 1px solid var(--line);
+  border-right: 1px solid var(--line);
   background: #ffffff;
 }
 
@@ -431,6 +441,22 @@ textarea {
   border-top: 1px solid var(--line);
 }
 
+@media (max-width: 1120px) {
+  .detail-body {
+    grid-template-columns: minmax(280px, 34vw) minmax(0, 1fr);
+  }
+
+  .session-main {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(220px, 1fr) minmax(280px, 42vh);
+  }
+
+  .moodle-panel {
+    border-left: 0;
+    border-top: 1px solid var(--line);
+  }
+}
+
 @media (max-width: 820px) {
   .topbar {
     align-items: stretch;
@@ -438,31 +464,32 @@ textarea {
     padding: 16px;
   }
 
-  .operator-form,
-  .workspace {
+  .operator-form {
     grid-template-columns: 1fr;
   }
 
-  .workspace {
-    grid-template-rows: minmax(220px, 36vh) minmax(0, 1fr);
+  .session-list {
+    grid-template-columns: 1fr;
   }
 
-  .session-list {
+  .list-toolbar {
+    min-height: 54px;
     border-right: 0;
     border-bottom: 1px solid var(--line);
+    padding: 10px 12px;
   }
 
   .detail-header {
     flex-direction: column;
   }
 
-  .session-main {
+  .detail-body {
     grid-template-columns: 1fr;
-    grid-template-rows: minmax(220px, 38vh) minmax(280px, 42vh);
+    grid-template-rows: minmax(220px, 32vh) minmax(0, 1fr);
   }
 
-  .moodle-panel {
-    border-left: 0;
+  .chat {
+    border-right: 0;
     border-top: 1px solid var(--line);
   }
 

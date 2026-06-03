@@ -92,6 +92,10 @@ function renderSessions() {
     return;
   }
 
+  if (!state.selectedSessionId || !state.sessions.has(state.selectedSessionId)) {
+    state.selectedSessionId = sessions[0]?.sessionId || "";
+  }
+
   for (const session of sessions) {
     const item = document.createElement("button");
     item.type = "button";
@@ -115,9 +119,6 @@ function renderSessions() {
     els.sessions.append(item);
   }
 
-  if (!state.selectedSessionId || !state.sessions.has(state.selectedSessionId)) {
-    state.selectedSessionId = sessions[0]?.sessionId || "";
-  }
   renderDetail();
 }
 
@@ -690,7 +691,7 @@ els.messageForm.addEventListener("submit", async (event) => {
 });
 
 els.messageText.addEventListener("keydown", (event) => {
-  if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+  if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
     event.preventDefault();
     els.messageForm.requestSubmit();
   }

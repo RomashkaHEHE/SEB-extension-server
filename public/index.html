@@ -19,13 +19,13 @@
       </header>
 
       <section class="workspace">
-        <aside class="session-list" aria-label="Sessions">
+        <section class="session-list" aria-label="Sessions">
           <div class="list-toolbar">
             <strong>Sessions</strong>
             <button id="refreshSessions" type="button">Refresh</button>
           </div>
           <div id="sessions" class="sessions"></div>
-        </aside>
+        </section>
 
         <section class="detail">
           <div id="emptyState" class="empty-state">Select an active session</div>
@@ -40,40 +40,42 @@
               </div>
             </header>
 
-            <div class="session-main">
-              <div class="preview">
-                <img id="screenshot" alt="Latest screenshot">
-                <p id="screenshotEmpty">No screenshot yet</p>
-              </div>
-
-              <section class="moodle-panel" aria-label="Moodle question">
-                <header class="panel-header">
-                  <div>
-                    <h3>Moodle question</h3>
-                    <p id="moodleMeta">No question yet</p>
-                  </div>
-                  <button id="refreshMoodleQuestions" type="button">Refresh</button>
-                </header>
-                <div id="moodleQuestionEmpty" class="moodle-empty">No Moodle question yet</div>
-                <div id="moodleQuestionPane" class="moodle-question-pane" hidden>
-                  <select id="moodleQuestionSelect" aria-label="Moodle question"></select>
-                  <iframe id="moodleQuestionFrame" class="moodle-question-frame" sandbox="allow-same-origin" title="Moodle question"></iframe>
-                  <div id="moodleAnswerFields" class="moodle-answer-fields"></div>
-                  <div class="moodle-actions">
-                    <button id="sendMoodleAnswers" class="primary" type="button">Send answers</button>
-                    <span id="moodleAnswerStatus"></span>
-                  </div>
-                </div>
+            <div class="detail-body">
+              <section class="chat">
+                <div id="messages" class="messages"></div>
+                <form id="messageForm" class="message-form">
+                  <textarea id="messageText" name="messageText" autocomplete="off" rows="3" placeholder="Message to extension user"></textarea>
+                  <button type="submit">Send</button>
+                </form>
               </section>
-            </div>
 
-            <section class="chat">
-              <div id="messages" class="messages"></div>
-              <form id="messageForm" class="message-form">
-                <textarea id="messageText" name="messageText" autocomplete="off" rows="3" placeholder="Message to extension user"></textarea>
-                <button type="submit">Send</button>
-              </form>
-            </section>
+              <div class="session-main">
+                <div class="preview">
+                  <img id="screenshot" alt="Latest screenshot">
+                  <p id="screenshotEmpty">No screenshot yet</p>
+                </div>
+
+                <section class="moodle-panel" aria-label="Moodle question">
+                  <header class="panel-header">
+                    <div>
+                      <h3>Moodle question</h3>
+                      <p id="moodleMeta">No question yet</p>
+                    </div>
+                    <button id="refreshMoodleQuestions" type="button">Refresh</button>
+                  </header>
+                  <div id="moodleQuestionEmpty" class="moodle-empty">No Moodle question yet</div>
+                  <div id="moodleQuestionPane" class="moodle-question-pane" hidden>
+                    <select id="moodleQuestionSelect" aria-label="Moodle question"></select>
+                    <iframe id="moodleQuestionFrame" class="moodle-question-frame" sandbox="allow-same-origin" title="Moodle question"></iframe>
+                    <div id="moodleAnswerFields" class="moodle-answer-fields"></div>
+                    <div class="moodle-actions">
+                      <button id="sendMoodleAnswers" class="primary" type="button">Send answers</button>
+                      <span id="moodleAnswerStatus"></span>
+                    </div>
+                  </div>
+                </section>
+              </div>
+            </div>
           </article>
         </section>
       </section>
