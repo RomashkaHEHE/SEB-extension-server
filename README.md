@@ -11,6 +11,9 @@ Implemented contract:
 - `POST /v1/extension/sessions/:sessionId/screenshots`
 - `POST /v1/extension/sessions/:sessionId/moodle/questions`
 - `POST /v1/extension/sessions/:sessionId/sos`
+- `GET /v1/extension-release/latest`
+- `GET /downloads/extension/latest.zip`
+- `POST /v1/releases/extension`
 - `PATCH /v1/extension/sessions/:sessionId/close`
 - `GET /v1/operator/sessions`
 - `GET /v1/operator/sessions/:sessionId`
@@ -24,7 +27,8 @@ Implemented contract:
 - `WS /v1/extension/ws?sessionId=...`
 - `WS /v1/operator/ws`
 
-The operator dashboard is served at `/`.
+The landing page is served at `/`.
+The operator dashboard is served at `/interface`.
 Operator dashboard, REST API, and WebSocket are public and do not require auth.
 Session list responses include a short `displayId` (`0001`, `0002`, ...), and
 the default operator session list only returns active sessions.
@@ -52,6 +56,8 @@ Open `http://localhost:3000`.
 - `PUBLIC_BASE_URL`: public site URL used in API responses, for example `https://urfuseb.ru`.
 - `DATA_DIR`: disk storage for sessions and screenshots, default `./data`.
 - `SCREENSHOT_MAX_BYTES`: multipart screenshot limit, default `8388608`.
+- `EXTENSION_RELEASE_UPLOAD_TOKEN`: bearer token for extension release uploads.
+- `EXTENSION_RELEASE_MAX_BYTES`: extension ZIP upload limit, default `83886080`.
 - `CORS_ORIGIN`: optional comma-separated allow-list.
 
 ## GitHub Actions Autodeploy
@@ -71,3 +77,4 @@ Required repository secrets:
 - `DEPLOY_PATH`: target path, for example `/home/user1/apps/seb-extension-server`.
 - `DEPLOY_SSH_PRIVATE_KEY`: private SSH key allowed in the server user's `authorized_keys`.
 - `APP_PUBLIC_BASE_URL`: public URL, for example `https://urfuseb.ru`.
+- `EXTENSION_RELEASE_UPLOAD_TOKEN`: bearer token accepted by `POST /v1/releases/extension`.

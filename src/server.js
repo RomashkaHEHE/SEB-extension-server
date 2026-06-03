@@ -20,6 +20,7 @@ const OFFLINE_AFTER_MS = 5 * 60 * 1000;
 const WS_OPEN = 1;
 const QUESTION_HTML_MAX_CHARS = 900_000;
 const QUESTION_TEXT_MAX_CHARS = 20_000;
+const DEFAULT_EXTENSION_RELEASE_MAX_BYTES = 80 * 1024 * 1024;
 const MOODLE_HOTKEY = {
   label: "Ctrl+Shift+2",
   ctrlKey: true,
@@ -66,6 +67,12 @@ function writeJsonFile(filePath, value) {
   fs.renameSync(tmpPath, filePath);
 }
 
+function writeBufferFileAtomic(filePath, value) {
+  const tmpPath = `${filePath}.${process.pid}.tmp`;
+  fs.writeFileSync(tmpPath, value);
+  fs.renameSync(tmpPath, filePath);
+}
+
 function asArray(value) {
   return Array.isArray(value) ? value.filter((item) => typeof item === "string") : [];
 }
@@ -99,6 +106,23 @@ function sanitizeFileExtension(mimetype) {
     return "jpg";
   }
   return "";
+}
+
+function isZipArchive(buffer) {
+  return Buffer.isBuffer(buffer)
+    && buffer.length >= 4
+    && buffer[0] === 0x50
+    && buffer[1] === 0x4b;
+}
+
+function sanitizeDownloadFileName(value, fallback = "seb-extension.zip") {
+  const raw = path.basename(String(value || fallback)).trim();
+  const cleaned = raw
+    .replace(/[^\w.()+ -]/g, "-")
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .slice(0, 140);
+  return cleaned.toLowerCase().endsWith(".zip") ? cleaned : `${cleaned || "seb-extension"}.zip`;
 }
 
 function parsePositiveInt(rawValue, fallback) {
@@ -245,19 +269,29 @@ function createState(dataDir) {
 }
 
 function createService(options = {}) {
+  const dataDir = path.resolve(options.dataDir || process.env.DATA_DIR || path.join(process.cwd(), "data"));
   const config = {
     host: options.host || process.env.HOST || "0.0.0.0",
     port: parsePositiveInt(options.port || process.env.PORT, 3000),
     publicBaseUrl: options.publicBaseUrl || process.env.PUBLIC_BASE_URL || "",
     corsOrigin: options.corsOrigin ?? process.env.CORS_ORIGIN ?? "",
-    dataDir: path.resolve(options.dataDir || process.env.DATA_DIR || path.join(process.cwd(), "data")),
+    dataDir,
     screenshotMaxBytes: parsePositiveInt(
       options.screenshotMaxBytes || process.env.SCREENSHOT_MAX_BYTES,
       8 * 1024 * 1024
+    ),
+    extensionReleaseUploadToken: options.extensionReleaseUploadToken || process.env.EXTENSION_RELEASE_UPLOAD_TOKEN || "",
+    extensionReleaseDir: path.resolve(
+      options.extensionReleaseDir || process.env.EXTENSION_RELEASE_DIR || path.join(dataDir, "extension-release")
+    ),
+    extensionReleaseMaxBytes: parsePositiveInt(
+      options.extensionReleaseMaxBytes || process.env.EXTENSION_RELEASE_MAX_BYTES,
+      DEFAULT_EXTENSION_RELEASE_MAX_BYTES
     )
   };
 
   const { state, save, screenshotsDir } = createState(config.dataDir);
+  ensureDir(config.extensionReleaseDir);
   const app = express();
   const server = http.createServer(app);
   const wsServer = new WebSocketServer({ noServer: true });
@@ -294,6 +328,17 @@ function createService(options = {}) {
       callback(ext ? null : new Error("unsupported_image_type"), Boolean(ext));
     }
   });
+  const extensionReleaseUpload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: config.extensionReleaseMaxBytes },
+    fileFilter: (_req, file, callback) => {
+      const fileName = String(file.originalname || "").toLowerCase();
+      callback(fileName.endsWith(".zip") ? null : new Error("unsupported_release_type"), fileName.endsWith(".zip"));
+    }
+  }).single("archive");
+
+  const extensionReleaseArchivePath = path.join(config.extensionReleaseDir, "latest.zip");
+  const extensionReleaseMetadataPath = path.join(config.extensionReleaseDir, "latest.json");
 
   function getBaseUrl(req) {
     if (config.publicBaseUrl) {
@@ -302,6 +347,44 @@ function createService(options = {}) {
     const forwardedProtocol = req.get("x-forwarded-proto");
     const protocol = forwardedProtocol ? forwardedProtocol.split(",")[0].trim() : req.protocol;
     return `${protocol}://${req.get("host")}`;
+  }
+
+  function getExtensionReleaseDownloadUrl(req) {
+    return `${getBaseUrl(req)}/downloads/extension/latest.zip`;
+  }
+
+  function readExtensionReleaseMetadata() {
+    return readJsonFile(extensionReleaseMetadataPath, null);
+  }
+
+  function serializeExtensionRelease(req) {
+    const metadata = readExtensionReleaseMetadata();
+    const available = Boolean(metadata && fs.existsSync(extensionReleaseArchivePath));
+    return {
+      available,
+      downloadUrl: available ? getExtensionReleaseDownloadUrl(req) : null,
+      fileName: available ? metadata.fileName || "seb-extension.zip" : "",
+      originalName: available ? metadata.originalName || "" : "",
+      tagName: available ? metadata.tagName || "" : "",
+      version: available ? metadata.version || "" : "",
+      releaseName: available ? metadata.releaseName || "" : "",
+      commitSha: available ? metadata.commitSha || "" : "",
+      size: available ? metadata.size || 0 : 0,
+      sha256: available ? metadata.sha256 || "" : "",
+      publishedAt: available ? metadata.publishedAt || null : null,
+      uploadedAt: available ? metadata.uploadedAt || null : null
+    };
+  }
+
+  function requireExtensionReleaseUpload(req, res, next) {
+    if (!config.extensionReleaseUploadToken) {
+      return jsonError(res, 503, "release_upload_not_configured", "Extension release upload token is not configured");
+    }
+    const token = getBearerToken(req.get("authorization"));
+    if (!safeEqual(config.extensionReleaseUploadToken, token)) {
+      return jsonError(res, 401, "invalid_token", "Release upload token is invalid");
+    }
+    return next();
   }
 
   function getWebSocketUrl(req, kind) {
@@ -650,6 +733,62 @@ function createService(options = {}) {
 
   app.get("/v1/health", (_req, res) => {
     res.json({ status: "ok", serverTime: nowIso() });
+  });
+
+  app.get(["/interface", "/interface/"], (_req, res) => {
+    res.sendFile(path.join(__dirname, "..", "public", "interface.html"));
+  });
+
+  app.get("/v1/extension-release/latest", (req, res) => {
+    res.json({ release: serializeExtensionRelease(req) });
+  });
+
+  app.get("/downloads/extension/latest.zip", (req, res) => {
+    const release = serializeExtensionRelease(req);
+    if (!release.available) {
+      return jsonError(res, 404, "extension_release_not_found", "Extension release archive was not uploaded yet");
+    }
+    res.setHeader("Cache-Control", "no-store");
+    return res.download(extensionReleaseArchivePath, release.fileName || "seb-extension.zip");
+  });
+
+  app.post("/v1/releases/extension", requireExtensionReleaseUpload, (req, res, next) => {
+    extensionReleaseUpload(req, res, (error) => {
+      if (error) {
+        return next(error);
+      }
+      if (!req.file) {
+        return jsonError(res, 400, "release_archive_required", "Multipart field archive with a .zip file is required");
+      }
+      if (!isZipArchive(req.file.buffer)) {
+        return jsonError(res, 415, "unsupported_release_type", "Only ZIP archives are supported");
+      }
+
+      const tagName = normalizeString(req.body?.tagName || req.body?.tag || "", 160);
+      const version = normalizeString(req.body?.version || tagName.replace(/^v/i, ""), 160);
+      const fileName = sanitizeDownloadFileName(
+        req.body?.fileName || req.file.originalname || (tagName ? `seb-extension-${tagName}.zip` : "seb-extension.zip")
+      );
+      const metadata = {
+        fileName,
+        originalName: sanitizeDownloadFileName(req.file.originalname || fileName),
+        tagName,
+        version,
+        releaseName: normalizeString(req.body?.releaseName || req.body?.name || "", 300),
+        commitSha: normalizeString(req.body?.commitSha || req.body?.sha || "", 80),
+        size: req.file.size,
+        sha256: crypto.createHash("sha256").update(req.file.buffer).digest("hex"),
+        publishedAt: normalizeString(req.body?.publishedAt, 80) || null,
+        uploadedAt: nowIso()
+      };
+
+      writeBufferFileAtomic(extensionReleaseArchivePath, req.file.buffer);
+      writeJsonFile(extensionReleaseMetadataPath, metadata);
+
+      return res.status(201).json({
+        release: serializeExtensionRelease(req)
+      });
+    });
   });
 
   app.post("/v1/extension/sessions", (req, res) => {
@@ -1221,10 +1360,13 @@ function createService(options = {}) {
       return next();
     }
     if (error.code === "LIMIT_FILE_SIZE") {
-      return jsonError(res, 413, "payload_too_large", "Screenshot payload is too large");
+      return jsonError(res, 413, "payload_too_large", "Uploaded file is too large");
     }
     if (error.message === "unsupported_image_type") {
       return jsonError(res, 415, "unsupported_image_type", "Only JPEG and PNG screenshots are supported");
+    }
+    if (error.message === "unsupported_release_type") {
+      return jsonError(res, 415, "unsupported_release_type", "Only ZIP extension release archives are supported");
     }
     console.error(error);
     return jsonError(res, 500, "internal_error", "Internal server error");

@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>SEB Remote Sessions</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div>
+          <h1>SEB Remote Sessions</h1>
+          <p id="connectionStatus">offline</p>
+        </div>
+        <form id="displayNameForm" class="operator-form">
+          <input id="displayName" name="displayName" autocomplete="name" placeholder="Display name">
+        </form>
+      </header>
+
+      <section class="workspace">
+        <section class="session-list" aria-label="Sessions">
+          <div class="list-toolbar">
+            <strong>Sessions</strong>
+            <button id="refreshSessions" type="button">Refresh</button>
+          </div>
+          <div id="sessions" class="sessions"></div>
+        </section>
+
+        <section class="detail">
+          <div id="emptyState" class="empty-state">Select an active session</div>
+          <article id="sessionDetail" class="session-detail" hidden>
+            <header class="detail-header">
+              <div>
+                <h2 id="detailTitle"></h2>
+                <p id="detailMeta"></p>
+              </div>
+              <div class="actions">
+                <button id="clearSos" class="sos-clear" type="button" hidden>Turn off SOS</button>
+                <button id="captureNow" type="button">Capture</button>
+              </div>
+            </header>
+
+            <nav class="session-tabs" role="tablist" aria-label="Session views">
+              <button id="liveTab" class="session-tab active" type="button" role="tab" aria-selected="true" aria-controls="liveView" data-session-tab="live">Chat + screen</button>
+              <button id="moodleTab" class="session-tab" type="button" role="tab" aria-selected="false" aria-controls="moodleView" data-session-tab="moodle">Question page</button>
+            </nav>
+
+            <div class="detail-body">
+              <section id="liveView" class="session-view live-view" role="tabpanel" aria-labelledby="liveTab">
+                <section class="chat">
+                  <div id="messages" class="messages"></div>
+                  <form id="messageForm" class="message-form">
+                    <textarea id="messageText" name="messageText" autocomplete="off" rows="3" placeholder="Message to extension user"></textarea>
+                    <button type="submit">Send</button>
+                  </form>
+                </section>
+
+                <div class="preview">
+                  <img id="screenshot" alt="Latest screenshot">
+                  <p id="screenshotEmpty">No screenshot yet</p>
+                </div>
+              </section>
+
+              <section id="moodleView" class="session-view moodle-view" role="tabpanel" aria-labelledby="moodleTab" hidden>
+                <section class="moodle-panel" aria-label="Moodle question">
+                  <header class="panel-header">
+                    <div>
+                      <h3>Moodle question</h3>
+                      <p id="moodleMeta">No question yet</p>
+                    </div>
+                  </header>
+                  <div id="moodleQuestionEmpty" class="moodle-empty">No Moodle question yet</div>
+                  <div id="moodleQuestionPane" class="moodle-question-pane" hidden>
+                    <iframe id="moodleQuestionFrame" class="moodle-question-frame" title="Moodle question"></iframe>
+                    <div id="moodleAnswerFields" class="moodle-answer-fields"></div>
+                    <div class="moodle-actions">
+                      <button id="sendMoodleAnswers" class="primary" type="button">Send answers</button>
+                      <span id="moodleAnswerStatus"></span>
+                    </div>
+                  </div>
+                </section>
+              </section>
+            </div>
+          </article>
+        </section>
+      </section>
+    </main>
+    <script src="/app.js"></script>
+  </body>
+</html>

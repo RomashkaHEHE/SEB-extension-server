@@ -363,6 +363,76 @@ test("extension sos signal highlights session and can be cleared by operator", a
   }
 });
 
+test("extension release archive can be uploaded and downloaded", async () => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "seb-server-"));
+  const service = createService({
+    host: "127.0.0.1",
+    port: 0,
+    dataDir,
+    extensionReleaseUploadToken: "release-upload-token",
+    publicBaseUrl: ""
+  });
+  const baseUrl = await listen(service.server);
+
+  try {
+    const emptyMetadataResponse = await fetch(`${baseUrl}/v1/extension-release/latest`);
+    assert.equal(emptyMetadataResponse.status, 200);
+    const emptyMetadata = await emptyMetadataResponse.json();
+    assert.equal(emptyMetadata.release.available, false);
+
+    const emptyDownloadResponse = await fetch(`${baseUrl}/downloads/extension/latest.zip`);
+    assert.equal(emptyDownloadResponse.status, 404);
+
+    const zip = Buffer.from([
+      0x50, 0x4b, 0x03, 0x04,
+      0x14, 0x00, 0x00, 0x00,
+      0x00, 0x00, 0x00, 0x00
+    ]);
+    const unauthorizedForm = new FormData();
+    unauthorizedForm.set("archive", new Blob([zip], { type: "application/zip" }), "seb-extension-v1.zip");
+    const unauthorizedResponse = await fetch(`${baseUrl}/v1/releases/extension`, {
+      method: "POST",
+      body: unauthorizedForm
+    });
+    assert.equal(unauthorizedResponse.status, 401);
+
+    const form = new FormData();
+    form.set("archive", new Blob([zip], { type: "application/zip" }), "seb-extension-v1.zip");
+    form.set("tagName", "v1.2.3");
+    form.set("releaseName", "SEB Helper Pro v1.2.3");
+    form.set("commitSha", "abc123");
+    form.set("publishedAt", "2026-06-04T00:00:00.000Z");
+
+    const uploadResponse = await fetch(`${baseUrl}/v1/releases/extension`, {
+      method: "POST",
+      headers: { Authorization: "Bearer release-upload-token" },
+      body: form
+    });
+    assert.equal(uploadResponse.status, 201);
+    const uploaded = await uploadResponse.json();
+    assert.equal(uploaded.release.available, true);
+    assert.equal(uploaded.release.tagName, "v1.2.3");
+    assert.equal(uploaded.release.fileName, "seb-extension-v1.zip");
+    assert.equal(uploaded.release.size, zip.length);
+    assert.match(uploaded.release.sha256, /^[a-f0-9]{64}$/);
+    assert.match(uploaded.release.downloadUrl, /\/downloads\/extension\/latest\.zip$/);
+
+    const metadataResponse = await fetch(`${baseUrl}/v1/extension-release/latest`);
+    assert.equal(metadataResponse.status, 200);
+    const metadata = await metadataResponse.json();
+    assert.equal(metadata.release.available, true);
+    assert.equal(metadata.release.releaseName, "SEB Helper Pro v1.2.3");
+
+    const downloadResponse = await fetch(`${baseUrl}/downloads/extension/latest.zip`);
+    assert.equal(downloadResponse.status, 200);
+    assert.match(downloadResponse.headers.get("content-disposition") || "", /seb-extension-v1\.zip/);
+    assert.deepEqual(Buffer.from(await downloadResponse.arrayBuffer()), zip);
+  } finally {
+    await close(service.server);
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
 test("moodle question snapshots and answers are forwarded over websockets", async () => {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "seb-server-"));
   const service = createService({

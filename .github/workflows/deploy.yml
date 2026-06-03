@@ -67,6 +67,7 @@ jobs:
           DEPLOY_SSH_PORT: ${{ secrets.DEPLOY_SSH_PORT }}
           DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
           APP_PUBLIC_BASE_URL: ${{ secrets.APP_PUBLIC_BASE_URL }}
+          EXTENSION_RELEASE_UPLOAD_TOKEN: ${{ secrets.EXTENSION_RELEASE_UPLOAD_TOKEN }}
         run: |
           set -euo pipefail
           ssh -i ~/.ssh/deploy_key -p "$DEPLOY_SSH_PORT" "$DEPLOY_USER@$DEPLOY_HOST" 'bash -s' <<EOF
@@ -86,6 +87,8 @@ jobs:
           PUBLIC_BASE_URL=$APP_PUBLIC_BASE_URL
           DATA_DIR=$DEPLOY_PATH/data
           SCREENSHOT_MAX_BYTES=8388608
+          EXTENSION_RELEASE_UPLOAD_TOKEN=$EXTENSION_RELEASE_UPLOAD_TOKEN
+          EXTENSION_RELEASE_MAX_BYTES=83886080
           CORS_ORIGIN=
           ENV_FILE
           cd "\$DEPLOY_PATH"
