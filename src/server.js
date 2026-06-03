@@ -340,6 +340,14 @@ function createService(options = {}) {
       .sort((left, right) => Date.parse(right.updatedAt || right.receivedAt || 0) - Date.parse(left.updatedAt || left.receivedAt || 0))[0] || null;
   }
 
+  function getCurrentQuestions(sessionId, status = "") {
+    const latestQuestion = getLatestQuestion(sessionId);
+    if (!latestQuestion || (status && latestQuestion.status !== status)) {
+      return [];
+    }
+    return [latestQuestion];
+  }
+
   function serializeMoodleQuestion(question) {
     return {
       questionId: question.questionId,
@@ -402,7 +410,7 @@ function createService(options = {}) {
       installId: session.installId || "",
       userLabel: session.userLabel || "",
       chatOpen: Boolean(session.chatOpen),
-      moodleQuestionCount: getSessionQuestions(sessionId).length,
+      moodleQuestionCount: latestQuestion ? 1 : 0,
       latestMoodleQuestionAt: latestQuestion?.updatedAt || latestQuestion?.receivedAt || null,
       extensionSocketConnected: extensionSockets.has(sessionId)
     };
@@ -720,9 +728,7 @@ function createService(options = {}) {
     question.moodle = normalizePlainObject(body.moodle);
     question.updatedAt = receivedAt;
 
-    if (!existing) {
-      questions.push(question);
-    }
+    questions.splice(0, questions.length, question);
     if (question.pageUrl) {
       session.currentUrl = question.pageUrl;
     }
@@ -881,9 +887,8 @@ function createService(options = {}) {
     }
 
     const status = typeof req.query.status === "string" ? req.query.status : "";
-    const questions = getSessionQuestions(session.sessionId)
+    const questions = getCurrentQuestions(session.sessionId, status)
       .map(serializeMoodleQuestion)
-      .filter((question) => !status || question.status === status)
       .sort((left, right) => Date.parse(right.updatedAt || right.receivedAt || 0) - Date.parse(left.updatedAt || left.receivedAt || 0));
 
     return res.json({ questions });

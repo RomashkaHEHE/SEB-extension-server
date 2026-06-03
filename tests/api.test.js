@@ -365,6 +365,47 @@ test("moodle question snapshots and answers are forwarded over websockets", asyn
     const result = await resultMessage;
     assert.equal(result.status, "ok");
     assert.equal(result.payload.appliedFieldCount, 1);
+
+    const secondQuestionUpsert = waitForJson(operatorSocket, (message) => (
+      message.type === "moodle.question.upsert"
+      && message.sessionId === created.sessionId
+      && message.question.clientQuestionId === "attempt-786072-slot-7"
+    ));
+    const secondQuestionResponse = await fetch(`${baseUrl}/v1/extension/sessions/${created.sessionId}/moodle/questions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${created.extensionToken}`
+      },
+      body: JSON.stringify({
+        clientQuestionId: "attempt-786072-slot-7",
+        pageUrl: "https://exam2.urfu.ru/mod/quiz/attempt.php?attempt=786072&cmid=645&page=6",
+        baseUrl: "https://exam2.urfu.ru/mod/quiz/",
+        attemptId: "786072",
+        cmid: "645",
+        slot: "7",
+        questionNumber: "7",
+        questionType: "multichoice",
+        questionFingerprint: "q910995:7",
+        html: "<div id=\"question-910995-7\" class=\"que multichoice\"><input name=\"q910995:7_answer\" type=\"radio\" value=\"1\"></div>",
+        controls: [{
+          name: "q910995:7_answer",
+          id: "q910995:7_answer",
+          type: "radio",
+          value: "1"
+        }]
+      })
+    });
+    assert.equal(secondQuestionResponse.status, 201);
+    const secondQuestionCreated = await secondQuestionResponse.json();
+    await secondQuestionUpsert;
+
+    const currentListResponse = await fetch(`${baseUrl}/v1/operator/sessions/${created.sessionId}/moodle/questions`);
+    assert.equal(currentListResponse.status, 200);
+    const currentList = await currentListResponse.json();
+    assert.equal(currentList.questions.length, 1);
+    assert.equal(currentList.questions[0].questionId, secondQuestionCreated.questionId);
+    assert.equal(currentList.questions[0].clientQuestionId, "attempt-786072-slot-7");
   } finally {
     for (const socket of sockets) {
       socket.close();

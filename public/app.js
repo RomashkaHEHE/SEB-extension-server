@@ -27,11 +27,9 @@ const els = {
   screenshot: document.getElementById("screenshot"),
   screenshotEmpty: document.getElementById("screenshotEmpty"),
   captureNow: document.getElementById("captureNow"),
-  refreshMoodleQuestions: document.getElementById("refreshMoodleQuestions"),
   moodleMeta: document.getElementById("moodleMeta"),
   moodleQuestionEmpty: document.getElementById("moodleQuestionEmpty"),
   moodleQuestionPane: document.getElementById("moodleQuestionPane"),
-  moodleQuestionSelect: document.getElementById("moodleQuestionSelect"),
   moodleQuestionFrame: document.getElementById("moodleQuestionFrame"),
   moodleAnswerFields: document.getElementById("moodleAnswerFields"),
   sendMoodleAnswers: document.getElementById("sendMoodleAnswers"),
@@ -224,10 +222,11 @@ async function loadMoodleQuestions() {
     return;
   }
   const payload = await api(`/v1/operator/sessions/${state.selectedSessionId}/moodle/questions`);
-  state.moodleQuestions = new Map(payload.questions.map((question) => [question.questionId, question]));
-  if (!state.selectedMoodleQuestionId || !state.moodleQuestions.has(state.selectedMoodleQuestionId)) {
-    state.selectedMoodleQuestionId = payload.questions[0]?.questionId || "";
-  }
+  const currentQuestion = payload.questions[0] || null;
+  state.moodleQuestions = currentQuestion
+    ? new Map([[currentQuestion.questionId, currentQuestion]])
+    : new Map();
+  state.selectedMoodleQuestionId = currentQuestion?.questionId || "";
   renderMoodleQuestion();
 }
 
@@ -238,15 +237,6 @@ function renderMoodleQuestion() {
   const question = state.moodleQuestions.get(state.selectedMoodleQuestionId) || questions[0] || null;
   if (question && state.selectedMoodleQuestionId !== question.questionId) {
     state.selectedMoodleQuestionId = question.questionId;
-  }
-
-  els.moodleQuestionSelect.innerHTML = "";
-  for (const item of questions) {
-    const option = document.createElement("option");
-    option.value = item.questionId;
-    option.textContent = formatMoodleQuestionTitle(item);
-    option.selected = item.questionId === state.selectedMoodleQuestionId;
-    els.moodleQuestionSelect.append(option);
   }
 
   els.moodleQuestionEmpty.hidden = Boolean(question);
@@ -501,12 +491,6 @@ function buildMoodleQuestionDocument(question) {
   </head>
   <body><main class="moodle-question-root">${body}</main></body>
 </html>`;
-}
-
-function formatMoodleQuestionTitle(question) {
-  const number = question.questionNumber ? `#${question.questionNumber}` : "question";
-  const type = question.questionType || "moodle";
-  return `${number} ${type} - ${formatTime(question.updatedAt || question.receivedAt)}`;
 }
 
 function escapeAttribute(value) {
@@ -869,10 +853,8 @@ function connectSocket() {
       appendMessage(message);
     }
     if (message.type === "moodle.question.upsert" && message.sessionId === state.selectedSessionId) {
-      state.moodleQuestions.set(message.question.questionId, message.question);
-      if (!state.selectedMoodleQuestionId) {
-        state.selectedMoodleQuestionId = message.question.questionId;
-      }
+      state.moodleQuestions = new Map([[message.question.questionId, message.question]]);
+      state.selectedMoodleQuestionId = message.question.questionId;
       renderMoodleQuestion();
     }
     if (message.type === "moodle.answer.submitted" && message.sessionId === state.selectedSessionId) {
@@ -894,21 +876,12 @@ els.refreshSessions.addEventListener("click", () => {
   ])).catch(showError);
 });
 
-els.refreshMoodleQuestions.addEventListener("click", () => {
-  loadMoodleQuestions().catch(showError);
-});
-
 for (const tabButton of [els.liveTab, els.moodleTab]) {
   tabButton.addEventListener("click", () => {
     state.activeSessionTab = tabButton.dataset.sessionTab || "live";
     renderSessionTabs();
   });
 }
-
-els.moodleQuestionSelect.addEventListener("change", () => {
-  state.selectedMoodleQuestionId = els.moodleQuestionSelect.value;
-  renderMoodleQuestion();
-});
 
 els.moodleQuestionFrame.addEventListener("load", () => {
   syncMoodleAnswerFallback();
@@ -1013,5 +986,8 @@ loadSessions().then(() => Promise.all([
   loadMoodleQuestions()
 ])).catch(showError);
 setInterval(() => {
-  loadSessions().then(loadMessages).catch(showError);
+  loadSessions().then(() => Promise.all([
+    loadMessages(),
+    loadMoodleQuestions()
+  ])).catch(showError);
 }, 15000);
