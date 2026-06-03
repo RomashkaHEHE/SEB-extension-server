@@ -173,6 +173,7 @@ function normalizeAnswerField(field) {
     type: normalizeString(source.type || source.kind, 80).toLowerCase(),
     value: normalizeLooseString(source.value, 20_000),
     values: Array.isArray(source.values) ? source.values.slice(0, 100).map((value) => normalizeLooseString(value, 2000)) : [],
+    text: normalizeString(source.text, 2000),
     checked: typeof source.checked === "boolean" ? source.checked : null
   };
 }

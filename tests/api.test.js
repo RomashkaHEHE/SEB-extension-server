@@ -337,6 +337,13 @@ test("moodle question snapshots and answers are forwarded over websockets", asyn
           id: "q910995:6_sub0",
           type: "select",
           value: "1"
+        }, {
+          name: "q910995:6_p1",
+          id: "drop-1",
+          selector: "#drop-1",
+          type: "dragdrop",
+          value: "2",
+          text: "Address"
         }],
         operatorDisplayName: "Roman"
       })
@@ -350,6 +357,8 @@ test("moodle question snapshots and answers are forwarded over websockets", asyn
     assert.equal(answer.questionId, questionCreated.questionId);
     assert.equal(answer.hotkey.code, "Digit2");
     assert.equal(answer.fields[0].value, "1");
+    assert.equal(answer.fields[1].type, "dragdrop");
+    assert.equal(answer.fields[1].text, "Address");
 
     const resultMessage = waitForJson(operatorSocket, (message) => (
       message.type === "moodle.answer.result" && message.answerId === answer.answerId
