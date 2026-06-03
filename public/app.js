@@ -239,14 +239,19 @@ async function loadMoodleQuestions() {
   renderMoodleQuestion();
 }
 
-function renderMoodleQuestion() {
-  const session = state.sessions.get(state.selectedSessionId);
+function getSelectedMoodleQuestion() {
   const questions = Array.from(state.moodleQuestions.values())
     .sort((left, right) => Date.parse(right.updatedAt || right.receivedAt || 0) - Date.parse(left.updatedAt || left.receivedAt || 0));
   const question = state.moodleQuestions.get(state.selectedMoodleQuestionId) || questions[0] || null;
   if (question && state.selectedMoodleQuestionId !== question.questionId) {
     state.selectedMoodleQuestionId = question.questionId;
   }
+  return question;
+}
+
+function renderMoodleQuestion() {
+  const session = state.sessions.get(state.selectedSessionId);
+  const question = getSelectedMoodleQuestion();
 
   els.moodleQuestionEmpty.hidden = Boolean(question);
   els.moodleQuestionPane.hidden = !question;
@@ -610,13 +615,15 @@ function buildMoodleQuestionDocument(question) {
       }
       .drag.moodle-drag-selected,
       .dragitem.moodle-drag-selected,
-      .draggable.moodle-drag-selected {
+      .draggable.moodle-drag-selected,
+      .seb-moodle-synthetic-drag.moodle-drag-selected {
         outline: 2px solid #0d6efd;
         outline-offset: 2px;
       }
       .drag.moodle-dragging,
       .dragitem.moodle-dragging,
-      .draggable.moodle-dragging {
+      .draggable.moodle-dragging,
+      .seb-moodle-synthetic-drag.moodle-dragging {
         cursor: grabbing;
         opacity: 0.65;
       }
@@ -637,6 +644,26 @@ function buildMoodleQuestionDocument(question) {
       .place.moodle-drop-filled {
         border-style: solid;
         background: #ffffff;
+      }
+      .seb-moodle-drag-bank {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.45rem;
+        margin: 1rem 0 0;
+      }
+      .seb-moodle-synthetic-drag {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 2.15rem;
+        min-width: 10rem;
+        padding: 0.35rem 0.75rem;
+        border: 1px solid #8f959e;
+        border-radius: 4px;
+        background: #ffffff;
+        color: #1d2125;
+        cursor: grab;
+        user-select: none;
       }
       .matching select,
       .match select,
@@ -855,8 +882,13 @@ function getMoodleFrameAnswerElements() {
     });
 }
 
+function hasMoodleFrameDragDrop(frameDocument) {
+  return Boolean(frameDocument && getMoodleDragItems(frameDocument).length && getMoodleDropTargets(frameDocument).length);
+}
+
 function syncMoodleAnswerFallback() {
-  els.moodleAnswerFields.hidden = getMoodleFrameAnswerElements().length > 0;
+  const frameDocument = els.moodleQuestionFrame.contentDocument;
+  els.moodleAnswerFields.hidden = getMoodleFrameAnswerElements().length > 0 || hasMoodleFrameDragDrop(frameDocument);
 }
 
 function prepareMoodleQuestionFrame() {
@@ -864,8 +896,122 @@ function prepareMoodleQuestionFrame() {
   if (!frameDocument) {
     return;
   }
+  inflateMoodleSyntheticDragControls(frameDocument, getSelectedMoodleQuestion());
   initializeMoodleFrameDragDrop(frameDocument);
   syncMoodleAnswerFallback();
+}
+
+function inflateMoodleSyntheticDragControls(frameDocument, question) {
+  if (!frameDocument.body || frameDocument.body.dataset.sebMoodleSyntheticDragReady === "true") {
+    return;
+  }
+  frameDocument.body.dataset.sebMoodleSyntheticDragReady = "true";
+
+  const dropTargets = getMoodleDropTargets(frameDocument);
+  if (!dropTargets.length || getMoodleDragItems(frameDocument).length) {
+    return;
+  }
+
+  const choices = getMoodleSyntheticDragChoices(question);
+  if (!choices.length) {
+    return;
+  }
+
+  const bank = frameDocument.createElement("div");
+  bank.className = "seb-moodle-drag-bank";
+  bank.dataset.sebDragBank = "true";
+  bank.setAttribute("aria-label", "Drag choices");
+
+  for (const choice of choices) {
+    const card = frameDocument.createElement("span");
+    card.className = "drag seb-moodle-synthetic-drag";
+    card.draggable = true;
+    card.setAttribute("role", "button");
+    card.setAttribute("tabindex", "0");
+    card.dataset.value = choice.value;
+    card.dataset.dragid = choice.value;
+    card.dataset.choice = choice.value;
+    card.textContent = choice.text;
+    bank.append(card);
+  }
+
+  const anchor = frameDocument.querySelector(".answer, .ablock, .formulation, .content, .moodle-question-root")
+    || frameDocument.body;
+  anchor.append(bank);
+}
+
+function getMoodleSyntheticDragChoices(question) {
+  if (!question || !looksLikeMoodleDragQuestion(question)) {
+    return [];
+  }
+
+  const choices = [];
+  const appendChoice = (rawValue, rawText) => {
+    const text = normalizeMoodleChoiceText(rawText || rawValue);
+    if (!text || looksLikeMoodlePlaceholderChoice(text)) {
+      return;
+    }
+    const value = String(rawValue || text).trim();
+    choices.push({ value, text });
+  };
+
+  for (const control of Array.isArray(question.controls) ? question.controls : []) {
+    if (!control) {
+      continue;
+    }
+    const type = String(control.type || "").toLowerCase();
+    if (Array.isArray(control.options) && control.options.length) {
+      for (const option of control.options) {
+        if (option?.disabled) {
+          continue;
+        }
+        appendChoice(option?.value || option?.label || option?.html, option?.label || option?.html || option?.value);
+      }
+      continue;
+    }
+
+    if (["dragdrop", "drag", "drop", "choice", "hidden", "text", "input", ""].includes(type)) {
+      const label = control.label || control.labelHtml || "";
+      const text = label || control.value || "";
+      if (text) {
+        appendChoice(control.value || text, text);
+      }
+    }
+  }
+
+  const seen = new Set();
+  return choices.filter((choice) => {
+    const key = normalizeMoodleChoiceText(choice.text).toLowerCase();
+    if (!key || seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
+}
+
+function looksLikeMoodleDragQuestion(question) {
+  const type = String(question.questionType || "").toLowerCase();
+  const html = String(question.html || "").toLowerCase();
+  return /(?:ddwtos|ddimageortext|ddmarker|drag|drop)/.test(type)
+    || /(?:class=["'][^"']*(?:drop|dropzone|place|droptarget|drag|dragitem|draggable)|data-(?:dropzone|place|dragid|choice|value))/.test(html)
+    || (Array.isArray(question.controls) && question.controls.some((control) => (
+      /(?:drag|drop|choice)/.test(String(control.type || "").toLowerCase())
+    )));
+}
+
+function normalizeMoodleChoiceText(value) {
+  const parsed = new DOMParser().parseFromString(String(value || ""), "text/html");
+  return (parsed.body?.textContent || String(value || ""))
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function looksLikeMoodlePlaceholderChoice(text) {
+  return !text
+    || /^[\d:._\-[\]]+$/.test(text)
+    || /^(?:0|none|choose|select|answer|option|drop|drag)$/i.test(text)
+    || /^q\d+:\d+/i.test(text);
 }
 
 function initializeMoodleFrameDragDrop(frameDocument) {
@@ -947,6 +1093,7 @@ function initializeMoodleFrameDragDrop(frameDocument) {
 
 function getMoodleDragItems(frameDocument) {
   return Array.from(frameDocument.querySelectorAll([
+    ".draghome",
     ".drag",
     ".dragitem",
     ".draggable",
@@ -955,7 +1102,8 @@ function getMoodleDragItems(frameDocument) {
     "[draggable='true']"
   ].join(", "))).filter((element) => (
     !isMoodleDropTarget(element)
-    && !element.matches(".draghome, .dragproxy, input, select, textarea, button")
+    && !(element.matches(".draghome") && element.querySelector(".drag, .dragitem, .draggable, [data-dragid], [data-choice], [draggable='true']"))
+    && !element.matches(".dragproxy, input, select, textarea, button")
     && element.textContent.trim()
   ));
 }
@@ -975,7 +1123,7 @@ function getMoodleDropTargets(frameDocument) {
 }
 
 function isMoodleDragItem(element) {
-  return element.matches(".drag, .dragitem, .draggable, [data-dragid], [data-choice], [draggable='true']");
+  return element.matches(".draghome, .drag, .dragitem, .draggable, [data-dragid], [data-choice], [draggable='true']");
 }
 
 function isMoodleDropTarget(element) {
@@ -1008,8 +1156,12 @@ function placeMoodleDragCard(frameDocument, drag, drop) {
   if (!drag || !drop || drop.contains(drag)) {
     return;
   }
+  const previousDrop = drag.closest(".drop, .dropzone, .place, .droptarget, [data-dropzone], [data-place]");
   returnExistingMoodleDropCards(frameDocument, drop);
   drop.append(drag);
+  if (previousDrop && previousDrop !== drop) {
+    clearMoodleDropAnswer(previousDrop);
+  }
   drop.classList.add("moodle-drop-filled");
   updateMoodleDropAnswer(frameDocument, drop, drag);
 }
@@ -1024,6 +1176,16 @@ function returnExistingMoodleDropCards(frameDocument, drop) {
       origin.append(card);
     }
   }
+  if (existingCards.length) {
+    clearMoodleDropAnswer(drop);
+  }
+}
+
+function clearMoodleDropAnswer(drop) {
+  drop.classList.remove("moodle-drop-filled", "moodle-drop-active");
+  delete drop.dataset.sebDropValue;
+  delete drop.dataset.sebDropText;
+  delete drop.dataset.sebFieldName;
 }
 
 function updateMoodleDropAnswer(frameDocument, drop, drag) {
