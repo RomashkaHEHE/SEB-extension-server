@@ -109,13 +109,9 @@ function renderSessions() {
     item.innerHTML = `
       <span class="session-line">
         <span class="session-domain">${escapeHtml(formatSessionTitle(session))}</span>
-        <span class="session-badges">
-          ${session.sosActive ? '<span class="badge sos">SOS</span>' : ""}
-          <span class="badge ${escapeHtml(session.status)}">${escapeHtml(session.status)}</span>
-        </span>
+        ${session.sosActive ? '<span class="badge sos">SOS</span>' : ""}
       </span>
-      <span class="session-url">${escapeHtml(session.currentUrl || "no url")}</span>
-      <span class="session-time">seen ${escapeHtml(formatTime(session.lastSeenAt))} - screenshot ${escapeHtml(formatTime(session.lastScreenshotAt))}</span>
+      <span class="session-time">${escapeHtml(formatSessionScreenshot(session))}</span>
     `;
     item.addEventListener("click", () => {
       state.selectedSessionId = session.sessionId;
@@ -1416,9 +1412,21 @@ function appendMessage(message) {
 }
 
 function formatSessionTitle(session) {
-  const displayId = session.displayId ? `#${session.displayId}` : session.sessionId;
+  const displayId = session.displayId ? `#${formatSessionDisplayId(session.displayId)}` : session.sessionId;
   const label = session.domain || session.userLabel || session.sessionId;
   return `${displayId} ${label}`;
+}
+
+function formatSessionDisplayId(displayId) {
+  const value = String(displayId || "").trim();
+  if (!/^\d+$/.test(value)) {
+    return value;
+  }
+  return String(Number.parseInt(value, 10));
+}
+
+function formatSessionScreenshot(session) {
+  return `screenshot ${formatTime(session.lastScreenshotAt)}`;
 }
 
 function showError(error) {
