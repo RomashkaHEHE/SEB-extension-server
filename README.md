@@ -10,6 +10,7 @@ Implemented contract:
 - `PATCH /v1/extension/sessions/:sessionId/heartbeat`
 - `POST /v1/extension/sessions/:sessionId/screenshots`
 - `POST /v1/extension/sessions/:sessionId/moodle/questions`
+- `POST /v1/extension/sessions/:sessionId/sos`
 - `PATCH /v1/extension/sessions/:sessionId/close`
 - `GET /v1/operator/sessions`
 - `GET /v1/operator/sessions/:sessionId`
@@ -18,6 +19,7 @@ Implemented contract:
 - `GET /v1/operator/sessions/:sessionId/moodle/questions`
 - `GET /v1/operator/sessions/:sessionId/moodle/questions/:questionId`
 - `POST /v1/operator/sessions/:sessionId/moodle/questions/:questionId/answers`
+- `POST /v1/operator/sessions/:sessionId/sos/clear`
 - `POST /v1/operator/sessions/:sessionId/commands`
 - `WS /v1/extension/ws?sessionId=...`
 - `WS /v1/operator/ws`
@@ -31,6 +33,7 @@ Operator messages can include `operatorDisplayName`; the extension receives the
 same value in `operator.message`.
 
 Moodle question transfer is described in `MOODLE_QUESTION_CONTRACT.md`.
+Remote SOS transfer is described in `REMOTE_SOS_CONTRACT.md`.
 
 ## Local Run
 

@@ -27,6 +27,7 @@ const els = {
   screenshot: document.getElementById("screenshot"),
   screenshotEmpty: document.getElementById("screenshotEmpty"),
   captureNow: document.getElementById("captureNow"),
+  clearSos: document.getElementById("clearSos"),
   moodleMeta: document.getElementById("moodleMeta"),
   moodleQuestionEmpty: document.getElementById("moodleQuestionEmpty"),
   moodleQuestionPane: document.getElementById("moodleQuestionPane"),
@@ -103,12 +104,15 @@ function renderSessions() {
   for (const session of sessions) {
     const item = document.createElement("button");
     item.type = "button";
-    item.className = `session-item ${session.sessionId === state.selectedSessionId ? "active" : ""}`;
+    item.className = `session-item ${session.sessionId === state.selectedSessionId ? "active" : ""} ${session.sosActive ? "sos" : ""}`;
     item.dataset.sessionId = session.sessionId;
     item.innerHTML = `
       <span class="session-line">
         <span class="session-domain">${escapeHtml(formatSessionTitle(session))}</span>
-        <span class="badge ${escapeHtml(session.status)}">${escapeHtml(session.status)}</span>
+        <span class="session-badges">
+          ${session.sosActive ? '<span class="badge sos">SOS</span>' : ""}
+          <span class="badge ${escapeHtml(session.status)}">${escapeHtml(session.status)}</span>
+        </span>
       </span>
       <span class="session-url">${escapeHtml(session.currentUrl || "no url")}</span>
       <span class="session-time">seen ${escapeHtml(formatTime(session.lastSeenAt))} - screenshot ${escapeHtml(formatTime(session.lastScreenshotAt))}</span>
@@ -148,6 +152,8 @@ function renderDetail() {
   els.sessionDetail.hidden = !session;
   renderSessionTabs();
   if (!session) {
+    els.sessionDetail.classList.remove("sos-active");
+    els.clearSos.hidden = true;
     state.moodleQuestions = new Map();
     state.selectedMoodleQuestionId = "";
     renderMoodleQuestion();
@@ -155,7 +161,10 @@ function renderDetail() {
   }
 
   els.detailTitle.textContent = formatSessionTitle(session);
-  els.detailMeta.textContent = `${session.status} - started ${formatTime(session.startedAt)} - ${session.currentUrl || "no url"}`;
+  const sosText = session.sosActive ? ` - SOS ${formatTime(session.sos?.sentAt || session.sos?.receivedAt)}` : "";
+  els.detailMeta.textContent = `${session.status}${sosText} - started ${formatTime(session.startedAt)} - ${session.currentUrl || "no url"}`;
+  els.sessionDetail.classList.toggle("sos-active", Boolean(session.sosActive));
+  els.clearSos.hidden = !session.sosActive;
 
   if (session.lastScreenshotUrl) {
     els.screenshot.hidden = false;
@@ -1228,10 +1237,12 @@ function appendMessage(message) {
   }
 
   const row = document.createElement("div");
-  row.className = `message ${message.sender === "operator" ? "operator" : "extension"}`;
+  row.className = `message ${message.sender === "operator" ? "operator" : message.sender === "system" ? "system" : "extension"}`;
   const sender = message.sender === "operator"
     ? message.operatorDisplayName || message.operatorId || "operator"
-    : "extension";
+    : message.sender === "system"
+      ? "system"
+      : "extension";
   const meta = document.createElement("strong");
   meta.textContent = `${sender} - ${formatTime(message.createdAt)}`;
   const body = document.createElement("div");
@@ -1286,6 +1297,15 @@ function connectSocket() {
         session.lastScreenshotAt = message.capturedAt;
         session.lastScreenshotUrl = message.url;
         renderSessions();
+      }
+    }
+    if (message.type === "session.sos" || message.type === "session.sos.cleared") {
+      const session = state.sessions.get(message.sessionId);
+      if (session) {
+        session.sos = message.sos || null;
+        session.sosActive = Boolean(message.sos?.active);
+        renderSessions();
+        renderDetail();
       }
     }
     if (message.type === "chat.message" && message.sessionId === state.selectedSessionId) {
@@ -1347,6 +1367,27 @@ async function sendCommand(name) {
 }
 
 els.captureNow.addEventListener("click", () => sendCommand("screenshot.capture_now").catch(showError));
+
+els.clearSos.addEventListener("click", async () => {
+  if (!state.selectedSessionId) {
+    return;
+  }
+  try {
+    const payload = await api(`/v1/operator/sessions/${state.selectedSessionId}/sos/clear`, {
+      method: "POST",
+      body: JSON.stringify({
+        operatorDisplayName: state.displayName || "Operator"
+      })
+    });
+    if (payload.session) {
+      state.sessions.set(payload.session.sessionId, payload.session);
+      renderSessions();
+      renderDetail();
+    }
+  } catch (error) {
+    showError(error);
+  }
+});
 
 els.sendMoodleAnswers.addEventListener("click", async () => {
   if (!state.selectedSessionId || !state.selectedMoodleQuestionId) {

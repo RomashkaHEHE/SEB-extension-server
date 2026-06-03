@@ -239,6 +239,130 @@ test("extension websocket accepts hello and forwards chat messages to operators"
   }
 });
 
+test("extension sos signal highlights session and can be cleared by operator", async () => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "seb-server-"));
+  const service = createService({
+    host: "127.0.0.1",
+    port: 0,
+    dataDir,
+    publicBaseUrl: ""
+  });
+  const baseUrl = await listen(service.server);
+  const wsBaseUrl = baseUrl.replace(/^http:/, "ws:");
+  const sockets = [];
+
+  try {
+    const createResponse = await fetch(`${baseUrl}/v1/extension/sessions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        installId: "install-sos",
+        domain: "exam.urfu.ru",
+        currentUrl: "https://exam.urfu.ru/mod/quiz/attempt.php",
+        capabilities: ["chat", "sos.hotkey"]
+      })
+    });
+    assert.equal(createResponse.status, 201);
+    const created = await createResponse.json();
+
+    const operatorSocket = new WebSocket(`${wsBaseUrl}/v1/operator/ws`);
+    sockets.push(operatorSocket);
+    const operatorHello = waitForJson(operatorSocket, (message) => message.type === "server.hello");
+    await waitForOpen(operatorSocket);
+    await operatorHello;
+
+    const sosEvent = waitForJson(operatorSocket, (message) => (
+      message.type === "session.sos" && message.sessionId === created.sessionId
+    ));
+    const sosChat = waitForJson(operatorSocket, (message) => (
+      message.type === "chat.message"
+      && message.sessionId === created.sessionId
+      && message.systemEvent === "sos.triggered"
+    ));
+    const sosResponse = await fetch(`${baseUrl}/v1/extension/sessions/${created.sessionId}/sos`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${created.extensionToken}`
+      },
+      body: JSON.stringify({
+        clientSignalId: "sos-client-1",
+        sentAt: "2026-06-04T08:15:00.000Z",
+        trigger: "hotkey",
+        source: "extension",
+        hotkey: {
+          label: "Ctrl+Shift+4",
+          code: "Digit4",
+          ctrlKey: true,
+          shiftKey: true
+        },
+        currentUrl: "https://exam.urfu.ru/mod/quiz/attempt.php?attempt=42",
+        pageTitle: "Quiz attempt",
+        displayId: created.displayId,
+        extensionVersion: "0.4.0"
+      })
+    });
+    assert.equal(sosResponse.status, 201);
+    const sosCreated = await sosResponse.json();
+    assert.ok(sosCreated.sosId);
+    assert.equal(sosCreated.clientSignalId, "sos-client-1");
+    assert.equal(sosCreated.active, true);
+
+    const sosPayload = await sosEvent;
+    assert.equal(sosPayload.sos.sosId, sosCreated.sosId);
+    assert.equal(sosPayload.sos.active, true);
+    assert.equal(sosPayload.sos.hotkey.label, "Ctrl+Shift+4");
+
+    const sosMessage = await sosChat;
+    assert.equal(sosMessage.sender, "system");
+    assert.equal(sosMessage.text, "SOS signal was pressed");
+    assert.equal(sosMessage.sosId, sosCreated.sosId);
+
+    const sessionsResponse = await fetch(`${baseUrl}/v1/operator/sessions?status=active`);
+    assert.equal(sessionsResponse.status, 200);
+    const sessions = await sessionsResponse.json();
+    assert.equal(sessions.sessions[0].sosActive, true);
+    assert.equal(sessions.sessions[0].sos.sosId, sosCreated.sosId);
+
+    const messagesResponse = await fetch(`${baseUrl}/v1/operator/sessions/${created.sessionId}/messages`);
+    assert.equal(messagesResponse.status, 200);
+    const messages = await messagesResponse.json();
+    assert.equal(messages.messages[0].sender, "system");
+    assert.equal(messages.messages[0].systemEvent, "sos.triggered");
+
+    const clearEvent = waitForJson(operatorSocket, (message) => (
+      message.type === "session.sos.cleared" && message.sessionId === created.sessionId
+    ));
+    const clearChat = waitForJson(operatorSocket, (message) => (
+      message.type === "chat.message"
+      && message.sessionId === created.sessionId
+      && message.systemEvent === "sos.cleared"
+    ));
+    const clearResponse = await fetch(`${baseUrl}/v1/operator/sessions/${created.sessionId}/sos/clear`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ operatorDisplayName: "Roman" })
+    });
+    assert.equal(clearResponse.status, 200);
+    const cleared = await clearResponse.json();
+    assert.equal(cleared.session.sosActive, false);
+    assert.equal(cleared.sos.active, false);
+    assert.equal(cleared.sos.clearedByDisplayName, "Roman");
+
+    const clearedPayload = await clearEvent;
+    assert.equal(clearedPayload.sos.active, false);
+    const clearMessage = await clearChat;
+    assert.equal(clearMessage.sender, "system");
+    assert.equal(clearMessage.text, "SOS signal was turned off");
+  } finally {
+    for (const socket of sockets) {
+      socket.close();
+    }
+    await close(service.server);
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
 test("moodle question snapshots and answers are forwarded over websockets", async () => {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "seb-server-"));
   const service = createService({

@@ -178,6 +178,19 @@ function normalizeAnswerField(field) {
   };
 }
 
+function normalizeHotkey(value) {
+  const source = normalizePlainObject(value);
+  return {
+    label: normalizeString(source.label, 80),
+    code: normalizeString(source.code, 80),
+    key: normalizeString(source.key, 40),
+    ctrlKey: Boolean(source.ctrlKey),
+    shiftKey: Boolean(source.shiftKey),
+    altKey: Boolean(source.altKey),
+    metaKey: Boolean(source.metaKey)
+  };
+}
+
 function createState(dataDir) {
   ensureDir(dataDir);
   ensureDir(path.join(dataDir, "screenshots"));
@@ -390,6 +403,32 @@ function createService(options = {}) {
     };
   }
 
+  function isSosActive(session) {
+    return Boolean(session?.activeSos && !session.activeSos.clearedAt);
+  }
+
+  function serializeSos(sos) {
+    if (!sos) {
+      return null;
+    }
+    return {
+      sosId: sos.sosId || "",
+      clientSignalId: sos.clientSignalId || "",
+      active: !sos.clearedAt,
+      sentAt: sos.sentAt || null,
+      receivedAt: sos.receivedAt || null,
+      clearedAt: sos.clearedAt || null,
+      trigger: sos.trigger || "",
+      source: sos.source || "",
+      currentUrl: sos.currentUrl || "",
+      pageTitle: sos.pageTitle || "",
+      displayId: sos.displayId || "",
+      extensionVersion: sos.extensionVersion || "",
+      hotkey: sos.hotkey || null,
+      clearedByDisplayName: sos.clearedByDisplayName || ""
+    };
+  }
+
   function serializeSession(session, req = null) {
     const sessionId = session.sessionId;
     const latestQuestion = getLatestQuestion(sessionId);
@@ -411,6 +450,8 @@ function createService(options = {}) {
       installId: session.installId || "",
       userLabel: session.userLabel || "",
       chatOpen: Boolean(session.chatOpen),
+      sosActive: isSosActive(session),
+      sos: serializeSos(session.activeSos),
       moodleQuestionCount: latestQuestion ? 1 : 0,
       latestMoodleQuestionAt: latestQuestion?.updatedAt || latestQuestion?.receivedAt || null,
       extensionSocketConnected: extensionSockets.has(sessionId)
@@ -452,6 +493,44 @@ function createService(options = {}) {
 
   function getSession(sessionId) {
     return state.sessions[sessionId] || null;
+  }
+
+  function appendSystemMessage(session, systemEvent, text, extra = {}) {
+    const message = {
+      messageId: createId(),
+      clientMessageId: extra.clientMessageId || "",
+      sessionId: session.sessionId,
+      sender: "system",
+      systemEvent,
+      text,
+      createdAt: extra.createdAt || nowIso(),
+      sosId: extra.sosId || "",
+      trigger: extra.trigger || "",
+      source: extra.source || "",
+      currentUrl: extra.currentUrl || ""
+    };
+    state.messages[session.sessionId] ||= [];
+    state.messages[session.sessionId].push(message);
+    return message;
+  }
+
+  function broadcastChatMessage(message) {
+    broadcastOperators({
+      type: "chat.message",
+      sessionId: message.sessionId,
+      messageId: message.messageId,
+      clientMessageId: message.clientMessageId || "",
+      sender: message.sender,
+      systemEvent: message.systemEvent || "",
+      operatorDisplayName: message.operatorDisplayName || "",
+      text: message.text,
+      createdAt: message.createdAt,
+      sosId: message.sosId || "",
+      trigger: message.trigger || "",
+      source: message.source || "",
+      currentUrl: message.currentUrl || "",
+      deliveryStatus: message.deliveryStatus || ""
+    });
   }
 
   function requireExtensionSession(req, res, next) {
@@ -752,6 +831,70 @@ function createService(options = {}) {
     });
   });
 
+  app.post("/v1/extension/sessions/:sessionId/sos", requireExtensionSession, (req, res) => {
+    const session = req.remoteSession;
+    const body = req.body || {};
+    const receivedAt = nowIso();
+    const sentAt = normalizeString(body.sentAt, 80) || receivedAt;
+    const currentUrl = normalizeString(body.currentUrl, 2000);
+    const sos = {
+      sosId: createId(),
+      clientSignalId: normalizeString(body.clientSignalId, 160),
+      sentAt,
+      receivedAt,
+      trigger: normalizeString(body.trigger, 80) || "hotkey",
+      source: normalizeString(body.source, 80) || "extension",
+      hotkey: normalizeHotkey(body.hotkey),
+      currentUrl,
+      pageTitle: normalizeString(body.pageTitle, 1000),
+      displayId: normalizeString(body.displayId, 80),
+      extensionVersion: normalizeString(body.extensionVersion, 80)
+    };
+
+    session.activeSos = sos;
+    session.lastSosAt = sentAt;
+    session.lastSeenAt = receivedAt;
+    if (currentUrl) {
+      session.currentUrl = currentUrl;
+    }
+
+    const chatMessage = appendSystemMessage(
+      session,
+      "sos.triggered",
+      "SOS signal was pressed",
+      {
+        clientMessageId: sos.clientSignalId ? `sos:${sos.clientSignalId}` : "",
+        createdAt: receivedAt,
+        sosId: sos.sosId,
+        trigger: sos.trigger,
+        source: sos.source,
+        currentUrl: sos.currentUrl
+      }
+    );
+    audit("sos.triggered", session.sessionId, "extension", {
+      sosId: sos.sosId,
+      clientSignalId: sos.clientSignalId,
+      trigger: sos.trigger,
+      source: sos.source
+    });
+    save();
+
+    broadcastSessionUpsert(session, req);
+    broadcastOperators({
+      type: "session.sos",
+      sessionId: session.sessionId,
+      sos: serializeSos(sos)
+    });
+    broadcastChatMessage(chatMessage);
+
+    return res.status(201).json({
+      sosId: sos.sosId,
+      clientSignalId: sos.clientSignalId,
+      active: true,
+      receivedAt
+    });
+  });
+
   app.patch("/v1/extension/sessions/:sessionId/close", requireExtensionSession, (req, res) => {
     const session = req.remoteSession;
     const closedAt = nowIso();
@@ -984,6 +1127,47 @@ function createService(options = {}) {
       deliveryStatus: answer.deliveryStatus,
       hotkey: MOODLE_HOTKEY,
       createdAt: answer.createdAt
+    });
+  });
+
+  app.post("/v1/operator/sessions/:sessionId/sos/clear", requireOperator, (req, res) => {
+    const session = getSession(req.params.sessionId);
+    if (!session) {
+      return jsonError(res, 404, "session_not_found", "Session was not found");
+    }
+
+    const clearedAt = nowIso();
+    const operatorDisplayName = normalizeDisplayName(req.body?.operatorDisplayName) || "Operator";
+    if (session.activeSos && !session.activeSos.clearedAt) {
+      session.activeSos.clearedAt = clearedAt;
+      session.activeSos.clearedByDisplayName = operatorDisplayName;
+      session.lastSosClearedAt = clearedAt;
+      const chatMessage = appendSystemMessage(
+        session,
+        "sos.cleared",
+        "SOS signal was turned off",
+        {
+          createdAt: clearedAt,
+          sosId: session.activeSos.sosId || ""
+        }
+      );
+      audit("sos.cleared", session.sessionId, "operator", {
+        sosId: session.activeSos.sosId || "",
+        operatorDisplayName
+      });
+      save();
+      broadcastSessionUpsert(session, req);
+      broadcastOperators({
+        type: "session.sos.cleared",
+        sessionId: session.sessionId,
+        sos: serializeSos(session.activeSos)
+      });
+      broadcastChatMessage(chatMessage);
+    }
+
+    return res.json({
+      session: serializeSession(session, req),
+      sos: serializeSos(session.activeSos)
     });
   });
 
