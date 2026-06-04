@@ -21,6 +21,7 @@ const state = {
   selectedMoodleQuestionId: "",
   activeSessionTab: "live",
   renderedMoodleQuestionKey: "",
+  renderedMoodleQuestionId: "",
   renderedMessageKeys: new Set(),
   applyingMoodleDraft: false,
   moodleDraftTimer: null,
@@ -332,6 +333,7 @@ function renderMoodleQuestion() {
     els.moodleAnswerFields.innerHTML = "";
     els.moodleAnswerFields.hidden = false;
     state.renderedMoodleQuestionKey = "";
+    state.renderedMoodleQuestionId = "";
     state.lastSentMoodleDraftKey = "";
     return;
   }
@@ -345,14 +347,24 @@ function renderMoodleQuestion() {
     ? `last answer ${question.latestAnswer.status || question.latestAnswer.deliveryStatus}`
     : "";
   const renderKey = getMoodleQuestionRenderKey(question);
+  const sameRenderedQuestion = state.renderedMoodleQuestionId === question.questionId
+    && Boolean(state.renderedMoodleQuestionKey);
+  if (sameRenderedQuestion) {
+    if (question.latestDraft?.operatorClientId !== state.operatorClientId) {
+      applyMoodleDraft(question.latestDraft, { preserveActiveElement: true });
+    }
+    syncMoodleAnswerFallback();
+    return;
+  }
   if (state.renderedMoodleQuestionKey === renderKey) {
     if (question.latestDraft?.operatorClientId !== state.operatorClientId) {
-      applyMoodleDraft(question.latestDraft);
+      applyMoodleDraft(question.latestDraft, { preserveActiveElement: true });
     }
     syncMoodleAnswerFallback();
     return;
   }
   state.renderedMoodleQuestionKey = renderKey;
+  state.renderedMoodleQuestionId = question.questionId;
   state.lastSentMoodleDraftKey = "";
   els.moodleQuestionFrame.srcdoc = buildMoodleQuestionDocument(question);
   renderMoodleAnswerFields(question);
@@ -1831,7 +1843,7 @@ function sendMoodleDraftUpdate() {
   }));
 }
 
-function applyMoodleDraft(draft) {
+function applyMoodleDraft(draft, options = {}) {
   const fields = getMoodleDraftFields(draft);
   if (!fields.length) {
     return;
@@ -1841,9 +1853,9 @@ function applyMoodleDraft(draft) {
   try {
     const frameDocument = els.moodleQuestionFrame.contentDocument;
     if (frameDocument) {
-      applyMoodleDraftFieldsToFrame(frameDocument, fields);
+      applyMoodleDraftFieldsToFrame(frameDocument, fields, options);
     }
-    applyMoodleDraftFieldsToEditor(fields);
+    applyMoodleDraftFieldsToEditor(fields, options);
     state.lastSentMoodleDraftKey = getMoodleDraftKey(collectMoodleAnswerFields());
   } finally {
     state.applyingMoodleDraft = false;
@@ -1863,19 +1875,19 @@ function applyMoodleDraftToEditorOnly(draft) {
   }
 }
 
-function applyMoodleDraftFieldsToEditor(fields) {
+function applyMoodleDraftFieldsToEditor(fields, options = {}) {
   for (const field of fields) {
     for (const element of findMoodleFieldElements(els.moodleAnswerFields, field)) {
-      setMoodleFormElementValue(element, field);
+      setMoodleFormElementValue(element, field, options);
     }
   }
 }
 
-function applyMoodleDraftFieldsToFrame(frameDocument, fields) {
+function applyMoodleDraftFieldsToFrame(frameDocument, fields, options = {}) {
   for (const field of fields) {
     const elements = findMoodleFieldElements(frameDocument, field);
     for (const element of elements) {
-      setMoodleFormElementValue(element, field);
+      setMoodleFormElementValue(element, field, options);
     }
 
     const drop = findMoodleDropForDraftField(frameDocument, field, elements[0] || null);
@@ -1916,7 +1928,15 @@ function findMoodleFieldElements(root, field) {
   return Array.from(new Set(elements)).filter((element) => !element.disabled);
 }
 
-function setMoodleFormElementValue(element, field) {
+function isMoodleActiveElement(element) {
+  return Boolean(element?.ownerDocument && element.ownerDocument.activeElement === element);
+}
+
+function setMoodleFormElementValue(element, field, options = {}) {
+  if (options.preserveActiveElement && isMoodleActiveElement(element)) {
+    return;
+  }
+
   const tagName = element.tagName.toLowerCase();
   const type = (element.getAttribute("type") || tagName).toLowerCase();
   const value = field.value || "";
@@ -2142,7 +2162,7 @@ function connectSocket() {
         question.latestDraft = message;
       }
       if (message.questionId === state.selectedMoodleQuestionId && message.operatorClientId !== state.operatorClientId) {
-        applyMoodleDraft(message);
+        applyMoodleDraft(message, { preserveActiveElement: true });
       }
     }
     if (message.type === "moodle.answer.result" && message.sessionId === state.selectedSessionId) {
