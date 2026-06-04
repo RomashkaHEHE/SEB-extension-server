@@ -4,7 +4,7 @@ Remote session server for SEB Helper Pro.
 
 ## API
 
-Implemented contract:
+Implemented API:
 
 - `POST /v1/extension/sessions`
 - `PATCH /v1/extension/sessions/:sessionId/heartbeat`
@@ -36,8 +36,9 @@ Operators cannot claim sessions and cannot open or close the extension chat.
 Operator messages can include `operatorDisplayName`; the extension receives the
 same value in `operator.message`.
 
-Moodle question transfer is described in `MOODLE_QUESTION_CONTRACT.md`.
-Remote SOS transfer is described in `REMOTE_SOS_CONTRACT.md`.
+Base remote session transfer is described in `contracts/REMOTE_SESSION_CONTRACT.md`.
+Moodle question transfer is described in `contracts/MOODLE_QUESTION_CONTRACT.md`.
+Remote SOS transfer is described in `contracts/REMOTE_SOS_CONTRACT.md`.
 
 ## Local Run
 
