@@ -45,9 +45,12 @@ body {
 }
 
 .landing-body {
-  display: grid;
-  place-items: center;
-  padding: 24px;
+  color-scheme: dark;
+  min-height: 100vh;
+  overflow: auto;
+  background: #0b0e0d;
+  color: #f5f7f2;
+  padding: 18px;
 }
 
 button,
@@ -73,59 +76,42 @@ button:hover {
 }
 
 .landing {
-  width: min(100%, 560px);
-}
-
-.landing-panel {
-  display: grid;
-  gap: 28px;
-  padding: 32px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: #ffffff;
-  box-shadow: var(--shadow);
-}
-
-.landing-kicker {
-  margin: 0 0 8px;
-  color: var(--muted);
-  font-size: 14px;
-}
-
-.landing h1 {
-  margin: 0;
-  font-size: 28px;
-  line-height: 1.15;
+  min-height: calc(100vh - 36px);
 }
 
 .landing-actions {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
 }
 
 .landing-button {
-  min-height: 54px;
+  min-height: 42px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid var(--line);
+  border: 1px solid rgba(255, 255, 255, 0.16);
   border-radius: 6px;
-  background: var(--panel);
-  color: var(--ink);
+  background: #16856b;
+  color: #ffffff;
   font-weight: 650;
+  line-height: 1;
+  padding: 0 18px;
   text-decoration: none;
+  transition: background-color 120ms ease, border-color 120ms ease, transform 120ms ease;
 }
 
 .landing-button:hover {
-  border-color: var(--accent);
-  color: var(--accent-strong);
+  border-color: rgba(255, 255, 255, 0.24);
+  background: #1b967a;
+  color: #ffffff;
+  transform: translateY(-1px);
 }
 
-.landing-button.primary {
-  border-color: var(--accent);
-  background: var(--accent);
-  color: #ffffff;
+.landing-button:focus-visible {
+  outline: 2px solid #f5f7f2;
+  outline-offset: 3px;
 }
 
 button.primary,
@@ -637,10 +623,6 @@ textarea {
   }
 
   .operator-form {
-    grid-template-columns: 1fr;
-  }
-
-  .landing-actions {
     grid-template-columns: 1fr;
   }
 
