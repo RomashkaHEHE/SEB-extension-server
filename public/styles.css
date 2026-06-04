@@ -98,11 +98,38 @@ button:hover {
   min-height: calc(100vh - 36px);
 }
 
+.landing-started {
+  padding: 0;
+}
+
+.landing-started .landing-actions {
+  display: none;
+}
+
 .landing-actions {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 10px;
+}
+
+.start-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  width: 100vw;
+  height: 100vh;
+  object-fit: contain;
+  background: #0b0e0d;
+}
+
+.clipboard-buffer {
+  position: fixed;
+  left: -1000px;
+  top: -1000px;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
 }
 
 .landing-button {

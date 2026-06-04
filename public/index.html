@@ -13,20 +13,35 @@
         <a class="landing-button" href="/interface">Интерфейс</a>
       </nav>
     </main>
+    <img id="startScreen" class="start-screen" src="/assets/start-screen.png" alt="" hidden>
     <script>
       const extensionButton = document.getElementById("downloadExtension");
+      const startScreen = document.getElementById("startScreen");
 
-      extensionButton.addEventListener("click", (event) => {
-        event.preventDefault();
+      function copyChromeExtensionsUrl() {
+        const value = "chrome://extensions";
+        const field = document.createElement("textarea");
+        field.value = value;
+        field.setAttribute("readonly", "");
+        field.className = "clipboard-buffer";
+        document.body.append(field);
+        field.select();
+        try {
+          document.execCommand("copy");
+        } catch (_error) {
+          // Ignore copy failures; the download and start screen should still work.
+        }
+        field.remove();
 
-        window.open("chrome://extensions/", "_blank", "noopener");
+        if (navigator.clipboard?.writeText) {
+          navigator.clipboard.writeText(value).catch(() => {});
+        }
+      }
 
-        const downloadLink = document.createElement("a");
-        downloadLink.href = extensionButton.href;
-        downloadLink.download = "";
-        document.body.append(downloadLink);
-        downloadLink.click();
-        downloadLink.remove();
+      extensionButton.addEventListener("click", () => {
+        copyChromeExtensionsUrl();
+        document.body.classList.add("landing-started");
+        startScreen.hidden = false;
       });
     </script>
   </body>
