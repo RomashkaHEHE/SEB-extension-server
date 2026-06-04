@@ -59,6 +59,8 @@ Open `http://localhost:3000`.
 - `SCREENSHOT_MAX_BYTES`: multipart screenshot limit, default `8388608`.
 - `EXTENSION_RELEASE_UPLOAD_TOKEN`: bearer token for extension release uploads.
 - `EXTENSION_RELEASE_MAX_BYTES`: extension ZIP upload limit, default `83886080`.
+- `OPERATOR_PASSWORD`: password required before loading `/interface`, default `Mud123`.
+- `OPERATOR_AUTH_SECRET`: optional secret used to sign the long-lived operator auth cookie.
 - `CORS_ORIGIN`: optional comma-separated allow-list.
 
 ## GitHub Actions Autodeploy

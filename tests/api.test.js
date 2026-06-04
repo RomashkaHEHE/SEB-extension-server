@@ -48,6 +48,69 @@ function waitForJson(socket, predicate = () => true) {
   });
 }
 
+test("operator interface requires password once and then accepts auth cookie", async () => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "seb-server-"));
+  const service = createService({
+    host: "127.0.0.1",
+    port: 0,
+    dataDir,
+    publicBaseUrl: "",
+    operatorPassword: "Mud123",
+    operatorAuthSecret: "test-secret"
+  });
+  const baseUrl = await listen(service.server);
+
+  try {
+    const lockedInterface = await fetch(`${baseUrl}/interface`);
+    assert.equal(lockedInterface.status, 401);
+    const lockedHtml = await lockedInterface.text();
+    assert.match(lockedHtml, /name="password"/);
+    assert.doesNotMatch(lockedHtml, /src="\/app\.js"/);
+
+    const lockedInterfaceFile = await fetch(`${baseUrl}/interface.html`);
+    assert.equal(lockedInterfaceFile.status, 401);
+
+    const unauthorizedSessions = await fetch(`${baseUrl}/v1/operator/sessions`);
+    assert.equal(unauthorizedSessions.status, 401);
+
+    const wrongPassword = await fetch(`${baseUrl}/interface/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: "password=wrong"
+    });
+    assert.equal(wrongPassword.status, 401);
+
+    const login = await fetch(`${baseUrl}/interface/login`, {
+      method: "POST",
+      redirect: "manual",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: "password=Mud123"
+    });
+    assert.equal(login.status, 303);
+    const cookie = login.headers.get("set-cookie") || "";
+    assert.match(cookie, /seb_operator_auth=/);
+
+    const unlockedInterface = await fetch(`${baseUrl}/interface`, {
+      headers: { Cookie: cookie }
+    });
+    assert.equal(unlockedInterface.status, 200);
+    assert.match(await unlockedInterface.text(), /src="\/app\.js"/);
+
+    const unlockedInterfaceFile = await fetch(`${baseUrl}/interface.html`, {
+      headers: { Cookie: cookie }
+    });
+    assert.equal(unlockedInterfaceFile.status, 200);
+
+    const authorizedSessions = await fetch(`${baseUrl}/v1/operator/sessions`, {
+      headers: { Cookie: cookie }
+    });
+    assert.equal(authorizedSessions.status, 200);
+  } finally {
+    await close(service.server);
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
 test("remote session lifecycle stores and exposes latest screenshot", async () => {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "seb-server-"));
   const service = createService({
@@ -55,7 +118,8 @@ test("remote session lifecycle stores and exposes latest screenshot", async () =
     port: 0,
     dataDir,
     operatorApiToken: "operator-test-token",
-    publicBaseUrl: ""
+    publicBaseUrl: "",
+    operatorPassword: ""
   });
   const baseUrl = await listen(service.server);
 
@@ -152,7 +216,8 @@ test("extension websocket accepts hello and forwards chat messages to operators"
     port: 0,
     dataDir,
     operatorApiToken: "operator-test-token",
-    publicBaseUrl: ""
+    publicBaseUrl: "",
+    operatorPassword: ""
   });
   const baseUrl = await listen(service.server);
   const wsBaseUrl = baseUrl.replace(/^http:/, "ws:");
@@ -245,7 +310,8 @@ test("extension sos signal highlights session and can be cleared by operator", a
     host: "127.0.0.1",
     port: 0,
     dataDir,
-    publicBaseUrl: ""
+    publicBaseUrl: "",
+    operatorPassword: ""
   });
   const baseUrl = await listen(service.server);
   const wsBaseUrl = baseUrl.replace(/^http:/, "ws:");
@@ -371,7 +437,8 @@ test("extension release archive can be uploaded and downloaded", async () => {
     port: 0,
     dataDir,
     extensionReleaseUploadToken: "release-upload-token",
-    publicBaseUrl: ""
+    publicBaseUrl: "",
+    operatorPassword: ""
   });
   const baseUrl = await listen(service.server);
 
@@ -436,11 +503,13 @@ test("extension release archive can be uploaded and downloaded", async () => {
 
 test("moodle question snapshots and answers are forwarded over websockets", async () => {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "seb-server-"));
+  const imageDataUrl = "data:image/png;base64,iVBORw0KGgo=";
   const service = createService({
     host: "127.0.0.1",
     port: 0,
     dataDir,
-    publicBaseUrl: ""
+    publicBaseUrl: "",
+    operatorPassword: ""
   });
   const baseUrl = await listen(service.server);
   const wsBaseUrl = baseUrl.replace(/^http:/, "ws:");
@@ -495,7 +564,29 @@ test("moodle question snapshots and answers are forwarded over websockets", asyn
         questionNumber: "6",
         questionType: "match",
         questionFingerprint: "q910995:6",
-        html: "<div id=\"question-910995-6\" class=\"que match\"><select name=\"q910995:6_sub0\"><option value=\"1\">A</option></select></div>",
+        html: "<div id=\"question-910995-6\" class=\"que match\"><img src=\"/pluginfile.php/123/question/questiontext/image.png\"><span class=\"math-tex\">\\(x^2\\)</span><select name=\"q910995:6_sub0\"><option value=\"1\">A</option></select></div>",
+        assets: [{
+          assetId: "asset-image-1",
+          kind: "image",
+          purpose: "img",
+          sourceUrl: "https://exam2.urfu.ru/pluginfile.php/123/question/questiontext/image.png",
+          originalUrl: "/pluginfile.php/123/question/questiontext/image.png",
+          status: "embedded",
+          mimeType: "image/png",
+          byteLength: 8,
+          dataUrl: imageDataUrl,
+          inlinedInHtml: false
+        }],
+        math: {
+          containsMath: true,
+          containsTexDelimiters: true,
+          formats: ["tex"],
+          items: [{
+            format: "tex",
+            text: "\\(x^2\\)",
+            html: "<span class=\"math-tex\">\\(x^2\\)</span>"
+          }]
+        },
         controls: [{
           name: "q910995:6_sub0",
           id: "q910995:6_sub0",
@@ -515,12 +606,16 @@ test("moodle question snapshots and answers are forwarded over websockets", asyn
     const upsert = await questionUpsert;
     assert.equal(upsert.question.questionType, "match");
     assert.equal(upsert.question.controls[0].name, "q910995:6_sub0");
+    assert.equal(upsert.question.assets[0].dataUrl, imageDataUrl);
+    assert.equal(upsert.question.math.containsMath, true);
 
     const listResponse = await fetch(`${baseUrl}/v1/operator/sessions/${created.sessionId}/moodle/questions`);
     assert.equal(listResponse.status, 200);
     const list = await listResponse.json();
     assert.equal(list.questions.length, 1);
     assert.equal(list.questions[0].clientQuestionId, "attempt-786072-slot-6");
+    assert.equal(list.questions[0].assets[0].sourceUrl, "https://exam2.urfu.ru/pluginfile.php/123/question/questiontext/image.png");
+    assert.equal(list.questions[0].math.formats[0], "tex");
 
     const extensionAnswer = waitForJson(extensionSocket, (message) => message.type === "moodle.answer");
     const answerResponse = await fetch(`${baseUrl}/v1/operator/sessions/${created.sessionId}/moodle/questions/${questionCreated.questionId}/answers`, {
@@ -625,7 +720,8 @@ test("moodle answer drafts are synchronized between operators without sending to
     host: "127.0.0.1",
     port: 0,
     dataDir,
-    publicBaseUrl: ""
+    publicBaseUrl: "",
+    operatorPassword: ""
   });
   const baseUrl = await listen(service.server);
   const wsBaseUrl = baseUrl.replace(/^http:/, "ws:");

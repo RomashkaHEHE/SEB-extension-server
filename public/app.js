@@ -376,7 +376,7 @@ function getMoodleQuestionBodyHtml(question) {
   if (question.html) {
     try {
       const parsed = new DOMParser().parseFromString(question.html, "text/html");
-      sanitizeMoodleQuestionDocument(parsed);
+      sanitizeMoodleQuestionDocument(parsed, question);
       const parsedBody = parsed.body?.innerHTML?.trim();
       if (parsedBody) {
         return parsedBody;
@@ -398,9 +398,93 @@ function getMoodleQuestionBodyHtml(question) {
   `;
 }
 
-function sanitizeMoodleQuestionDocument(parsed) {
+function sanitizeMoodleQuestionDocument(parsed, question) {
   parsed.querySelectorAll("script").forEach((element) => element.remove());
   replaceUnsupportedMoodleMedia(parsed);
+  rewriteMoodleAssetUrls(parsed, question);
+}
+
+function getMoodleAssetUrlMap(question) {
+  const map = new Map();
+  const assets = Array.isArray(question?.assets) ? question.assets : [];
+  const baseUrl = question?.baseUrl || question?.pageUrl || "";
+  for (const asset of assets) {
+    if (!asset?.dataUrl) {
+      continue;
+    }
+    for (const rawUrl of [asset.sourceUrl, asset.originalUrl].filter(Boolean)) {
+      map.set(rawUrl, asset.dataUrl);
+      try {
+        map.set(new URL(rawUrl, baseUrl).href, asset.dataUrl);
+      } catch {
+        // Keep the original key only.
+      }
+    }
+  }
+  return map;
+}
+
+function getMoodleAssetReplacement(urlMap, value, baseUrl) {
+  if (!value || urlMap.has(value)) {
+    return urlMap.get(value) || "";
+  }
+  try {
+    return urlMap.get(new URL(value, baseUrl).href) || "";
+  } catch {
+    return "";
+  }
+}
+
+function rewriteMoodleAssetAttribute(element, attrName, urlMap, baseUrl) {
+  const value = element.getAttribute(attrName);
+  const replacement = getMoodleAssetReplacement(urlMap, value, baseUrl);
+  if (replacement) {
+    element.setAttribute(attrName, replacement);
+  }
+}
+
+function rewriteMoodleAssetSrcset(element, attrName, urlMap, baseUrl) {
+  const value = element.getAttribute(attrName);
+  if (!value) {
+    return;
+  }
+  const rewritten = value.split(",").map((part) => {
+    const trimmed = part.trim();
+    const [url, ...descriptorParts] = trimmed.split(/\s+/);
+    const replacement = getMoodleAssetReplacement(urlMap, url, baseUrl);
+    return [replacement || url, ...descriptorParts].join(" ");
+  }).join(", ");
+  element.setAttribute(attrName, rewritten);
+}
+
+function rewriteMoodleAssetStyle(element, urlMap, baseUrl) {
+  const value = element.getAttribute("style");
+  if (!value || !value.includes("url(")) {
+    return;
+  }
+  const rewritten = value.replace(/url\((['"]?)(.*?)\1\)/g, (match, quote, url) => {
+    const replacement = getMoodleAssetReplacement(urlMap, url, baseUrl);
+    return replacement ? `url(${quote}${replacement}${quote})` : match;
+  });
+  element.setAttribute("style", rewritten);
+}
+
+function rewriteMoodleAssetUrls(parsed, question) {
+  const urlMap = getMoodleAssetUrlMap(question);
+  if (!urlMap.size) {
+    return;
+  }
+  const baseUrl = question?.baseUrl || question?.pageUrl || "";
+  parsed.querySelectorAll("[src]").forEach((element) => rewriteMoodleAssetAttribute(element, "src", urlMap, baseUrl));
+  parsed.querySelectorAll("[poster]").forEach((element) => rewriteMoodleAssetAttribute(element, "poster", urlMap, baseUrl));
+  parsed.querySelectorAll("[href]").forEach((element) => {
+    if (element.tagName.toLowerCase() === "image") {
+      rewriteMoodleAssetAttribute(element, "href", urlMap, baseUrl);
+    }
+  });
+  parsed.querySelectorAll("[xlink\\:href]").forEach((element) => rewriteMoodleAssetAttribute(element, "xlink:href", urlMap, baseUrl));
+  parsed.querySelectorAll("[srcset]").forEach((element) => rewriteMoodleAssetSrcset(element, "srcset", urlMap, baseUrl));
+  parsed.querySelectorAll("[style]").forEach((element) => rewriteMoodleAssetStyle(element, urlMap, baseUrl));
 }
 
 function replaceUnsupportedMoodleMedia(parsed) {
@@ -518,11 +602,15 @@ function looksLikeMediaControlText(text) {
 function buildMoodleQuestionDocument(question) {
   const baseHref = question.baseUrl || question.pageUrl || "";
   const body = getMoodleQuestionBodyHtml(question);
+  const mathScript = shouldLoadMoodleMathRenderer(question, body)
+    ? '<script async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>'
+    : "";
   return `<!doctype html>
 <html>
   <head>
     <meta charset="utf-8">
     <base href="${escapeAttribute(baseHref)}">
+    ${mathScript}
     <style>
       :root { color-scheme: light; }
       * { box-sizing: border-box; }
@@ -829,6 +917,14 @@ function buildMoodleQuestionDocument(question) {
   </head>
   <body><main class="moodle-question-root">${body}</main></body>
 </html>`;
+}
+
+function shouldLoadMoodleMathRenderer(question, html) {
+  if (question?.math?.containsMath) {
+    return true;
+  }
+  return /(?:\\\(|\\\[|\$\$|class=["'][^"']*(?:math-tex|filter_mathjaxloader_equation|MathJax)|<mjx-container|<math[\s>])/i
+    .test(String(html || ""));
 }
 
 function escapeAttribute(value) {

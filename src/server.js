@@ -20,7 +20,13 @@ const OFFLINE_AFTER_MS = 5 * 60 * 1000;
 const WS_OPEN = 1;
 const QUESTION_HTML_MAX_CHARS = 900_000;
 const QUESTION_TEXT_MAX_CHARS = 20_000;
+const QUESTION_ASSET_MAX_COUNT = 40;
+const QUESTION_ASSET_DATA_URL_MAX_CHARS = 4 * 1024 * 1024;
+const QUESTION_ASSET_SINGLE_DATA_URL_MAX_CHARS = 2 * 1024 * 1024;
+const QUESTION_MATH_ITEM_MAX_COUNT = 80;
 const DEFAULT_EXTENSION_RELEASE_MAX_BYTES = 80 * 1024 * 1024;
+const OPERATOR_AUTH_COOKIE = "seb_operator_auth";
+const OPERATOR_AUTH_MAX_AGE_SECONDS = 365 * 24 * 60 * 60;
 const MOODLE_HOTKEY = {
   label: "Ctrl+Shift+2",
   ctrlKey: true,
@@ -152,6 +158,14 @@ function normalizeLooseString(value, maxLength) {
   return typeof value === "string" ? value.slice(0, maxLength) : "";
 }
 
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+}
+
 function normalizePlainObject(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : {};
 }
@@ -187,6 +201,73 @@ function normalizeControl(control) {
   };
 }
 
+function isAllowedMoodleImageDataUrl(value) {
+  return /^data:image\/(?:png|jpe?g|gif|webp|svg\+xml)(?:[;,]|$)/i.test(String(value || ""));
+}
+
+function normalizeMoodleAsset(asset, remainingDataUrlChars) {
+  const source = normalizePlainObject(asset);
+  const rawDataUrl = typeof source.dataUrl === "string" ? source.dataUrl : "";
+  const maxDataUrlChars = Math.min(QUESTION_ASSET_SINGLE_DATA_URL_MAX_CHARS, Math.max(0, remainingDataUrlChars));
+  let dataUrl = "";
+  if (rawDataUrl.length <= maxDataUrlChars && isAllowedMoodleImageDataUrl(rawDataUrl)) {
+    dataUrl = rawDataUrl;
+  }
+
+  return {
+    assetId: normalizeString(source.assetId, 160),
+    kind: normalizeString(source.kind || "image", 80),
+    purpose: normalizeString(source.purpose, 80),
+    sourceUrl: normalizeLooseString(source.sourceUrl, 2000),
+    originalUrl: normalizeLooseString(source.originalUrl, 2000),
+    status: normalizeString(source.status, 80),
+    mimeType: normalizeString(source.mimeType, 120),
+    byteLength: parsePositiveInt(source.byteLength, 0),
+    dataUrl,
+    inlinedInHtml: Boolean(source.inlinedInHtml),
+    error: normalizeString(source.error, 1000)
+  };
+}
+
+function normalizeMoodleAssets(value) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  let remainingDataUrlChars = QUESTION_ASSET_DATA_URL_MAX_CHARS;
+  const assets = [];
+  for (const item of value.slice(0, QUESTION_ASSET_MAX_COUNT)) {
+    const asset = normalizeMoodleAsset(item, remainingDataUrlChars);
+    if (asset.dataUrl) {
+      remainingDataUrlChars -= asset.dataUrl.length;
+    }
+    if (asset.sourceUrl || asset.originalUrl || asset.dataUrl) {
+      assets.push(asset);
+    }
+  }
+  return assets;
+}
+
+function normalizeMoodleMath(value) {
+  const source = normalizePlainObject(value);
+  const items = Array.isArray(source.items) ? source.items.slice(0, QUESTION_MATH_ITEM_MAX_COUNT).map((item) => {
+    const itemSource = normalizePlainObject(item);
+    return {
+      format: normalizeString(itemSource.format, 80),
+      text: normalizeLooseString(itemSource.text, 20_000),
+      html: normalizeLooseString(itemSource.html, 50_000),
+      sourceUrl: normalizeLooseString(itemSource.sourceUrl, 2000),
+      assetId: normalizeString(itemSource.assetId, 160)
+    };
+  }).filter((item) => item.format || item.text || item.html || item.sourceUrl || item.assetId) : [];
+
+  return {
+    containsMath: Boolean(source.containsMath),
+    containsTexDelimiters: Boolean(source.containsTexDelimiters),
+    formats: Array.isArray(source.formats) ? source.formats.slice(0, 20).map((format) => normalizeString(format, 80)).filter(Boolean) : [],
+    items
+  };
+}
+
 function normalizeAnswerField(field) {
   const source = normalizePlainObject(field);
   return {
@@ -213,6 +294,49 @@ function normalizeHotkey(value) {
     altKey: Boolean(source.altKey),
     metaKey: Boolean(source.metaKey)
   };
+}
+
+function parseCookies(rawHeader) {
+  const cookies = {};
+  for (const part of String(rawHeader || "").split(";")) {
+    const index = part.indexOf("=");
+    if (index === -1) {
+      continue;
+    }
+    const key = part.slice(0, index).trim();
+    const value = part.slice(index + 1).trim();
+    if (key) {
+      try {
+        cookies[key] = decodeURIComponent(value);
+      } catch {
+        cookies[key] = value;
+      }
+    }
+  }
+  return cookies;
+}
+
+function createOperatorAuthToken(password, secret) {
+  return crypto
+    .createHmac("sha256", secret || password)
+    .update(`operator:${password}`)
+    .digest("base64url");
+}
+
+function serializeCookie(name, value, options = {}) {
+  const parts = [`${name}=${encodeURIComponent(value)}`];
+  if (options.maxAge) {
+    parts.push(`Max-Age=${options.maxAge}`);
+  }
+  parts.push(`Path=${options.path || "/"}`);
+  parts.push(`SameSite=${options.sameSite || "Lax"}`);
+  if (options.httpOnly !== false) {
+    parts.push("HttpOnly");
+  }
+  if (options.secure) {
+    parts.push("Secure");
+  }
+  return parts.join("; ");
 }
 
 function createState(dataDir) {
@@ -287,7 +411,9 @@ function createService(options = {}) {
     extensionReleaseMaxBytes: parsePositiveInt(
       options.extensionReleaseMaxBytes || process.env.EXTENSION_RELEASE_MAX_BYTES,
       DEFAULT_EXTENSION_RELEASE_MAX_BYTES
-    )
+    ),
+    operatorPassword: options.operatorPassword ?? process.env.OPERATOR_PASSWORD ?? "Mud123",
+    operatorAuthSecret: options.operatorAuthSecret || process.env.OPERATOR_AUTH_SECRET || ""
   };
 
   const { state, save, screenshotsDir } = createState(config.dataDir);
@@ -307,7 +433,7 @@ function createService(options = {}) {
         frameSrc: ["'self'", "data:", "blob:"],
         imgSrc: ["'self'", "https:", "data:", "blob:"],
         mediaSrc: ["'self'", "https:", "data:", "blob:"],
-        scriptSrc: ["'self'"],
+        scriptSrc: ["'self'", "https://cdn.jsdelivr.net"],
         styleSrc: ["'self'", "'unsafe-inline'"]
       }
     }
@@ -317,8 +443,9 @@ function createService(options = {}) {
     credentials: true
   }));
   app.use(express.json({ limit: "5mb" }));
+  app.use(express.urlencoded({ extended: false, limit: "16kb" }));
   app.use(morgan(process.env.NODE_ENV === "production" ? "combined" : "dev"));
-  app.use(express.static(path.join(__dirname, "..", "public")));
+  const publicDir = path.join(__dirname, "..", "public");
 
   const upload = multer({
     storage: multer.memoryStorage(),
@@ -385,6 +512,92 @@ function createService(options = {}) {
       return jsonError(res, 401, "invalid_token", "Release upload token is invalid");
     }
     return next();
+  }
+
+  function getOperatorAuthToken() {
+    return createOperatorAuthToken(config.operatorPassword, config.operatorAuthSecret || config.operatorPassword);
+  }
+
+  function isHttpsRequest(req) {
+    const forwardedProtocol = typeof req.get === "function" ? req.get("x-forwarded-proto") : req.headers["x-forwarded-proto"];
+    return Boolean(req.secure || String(forwardedProtocol || "").split(",")[0].trim() === "https");
+  }
+
+  function isOperatorAuthorized(req) {
+    if (!config.operatorPassword) {
+      return true;
+    }
+    const cookies = parseCookies(req.headers.cookie || "");
+    return safeEqual(cookies[OPERATOR_AUTH_COOKIE] || "", getOperatorAuthToken());
+  }
+
+  function setOperatorAuthCookie(req, res) {
+    res.setHeader("Set-Cookie", serializeCookie(OPERATOR_AUTH_COOKIE, getOperatorAuthToken(), {
+      maxAge: OPERATOR_AUTH_MAX_AGE_SECONDS,
+      path: "/",
+      sameSite: "Lax",
+      httpOnly: true,
+      secure: isHttpsRequest(req)
+    }));
+  }
+
+  function renderOperatorLoginPage(errorMessage = "") {
+    return `<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Interface Login</title>
+    <link rel="icon" type="image/png" href="/assets/site-ico.png">
+    <style>
+      * { box-sizing: border-box; }
+      body {
+        min-height: 100vh;
+        margin: 0;
+        display: grid;
+        place-items: center;
+        background: #0b0e0d;
+        color: #f5f7f2;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+      form {
+        width: min(320px, calc(100vw - 32px));
+        display: grid;
+        gap: 12px;
+      }
+      input, button {
+        min-height: 42px;
+        width: 100%;
+        border: 1px solid rgba(255, 255, 255, 0.18);
+        border-radius: 6px;
+        font: inherit;
+      }
+      input {
+        background: #ffffff;
+        color: #101414;
+        padding: 0 12px;
+      }
+      button {
+        background: #3f4447;
+        color: #ffffff;
+        cursor: pointer;
+      }
+      p {
+        min-height: 20px;
+        margin: 0;
+        color: #ffb4ab;
+        font-size: 14px;
+      }
+    </style>
+  </head>
+  <body>
+    <form method="post" action="/interface/login">
+      <input name="password" type="password" autocomplete="current-password" placeholder="Password" autofocus>
+      <button type="submit">Войти</button>
+      <p>${escapeHtml(errorMessage)}</p>
+    </form>
+  </body>
+</html>`;
   }
 
   function getWebSocketUrl(req, kind) {
@@ -463,6 +676,13 @@ function createService(options = {}) {
       title: question.title || "",
       text: question.text || "",
       html: question.html || "",
+      assets: Array.isArray(question.assets) ? question.assets : [],
+      math: question.math || {
+        containsMath: false,
+        containsTexDelimiters: false,
+        formats: [],
+        items: []
+      },
       controls: Array.isArray(question.controls) ? question.controls : [],
       moodle: question.moodle || {},
       receivedAt: question.receivedAt,
@@ -651,8 +871,9 @@ function createService(options = {}) {
   }
 
   function requireOperator(req, res, next) {
-    void req;
-    void res;
+    if (!isOperatorAuthorized(req)) {
+      return jsonError(res, 401, "operator_auth_required", "Operator password is required");
+    }
     return next();
   }
 
@@ -753,9 +974,23 @@ function createService(options = {}) {
     res.json({ status: "ok", serverTime: nowIso() });
   });
 
-  app.get(["/interface", "/interface/"], (_req, res) => {
-    res.sendFile(path.join(__dirname, "..", "public", "interface.html"));
+  app.get(["/interface", "/interface/", "/interface.html"], (req, res) => {
+    if (!isOperatorAuthorized(req)) {
+      return res.status(401).type("html").send(renderOperatorLoginPage());
+    }
+    res.sendFile(path.join(publicDir, "interface.html"));
   });
+
+  app.post("/interface/login", (req, res) => {
+    const password = typeof req.body?.password === "string" ? req.body.password : "";
+    if (safeEqual(password, config.operatorPassword)) {
+      setOperatorAuthCookie(req, res);
+      return res.redirect(303, "/interface");
+    }
+    return res.status(401).type("html").send(renderOperatorLoginPage("Неверный пароль"));
+  });
+
+  app.use(express.static(publicDir));
 
   app.get("/v1/extension-release/latest", (req, res) => {
     res.json({ release: serializeExtensionRelease(req) });
@@ -929,6 +1164,8 @@ function createService(options = {}) {
     const html = normalizeLooseString(body.html, QUESTION_HTML_MAX_CHARS);
     const text = normalizeString(body.text, QUESTION_TEXT_MAX_CHARS);
     const controls = Array.isArray(body.controls) ? body.controls.slice(0, 400).map(normalizeControl) : [];
+    const assets = normalizeMoodleAssets(body.assets);
+    const math = normalizeMoodleMath(body.math);
 
     if (!html && !text && !controls.length) {
       return jsonError(res, 400, "invalid_moodle_question", "Question html, text, or controls are required");
@@ -961,6 +1198,8 @@ function createService(options = {}) {
     question.title = normalizeString(body.title, 1000);
     question.text = text;
     question.html = html;
+    question.assets = assets;
+    question.math = math;
     question.controls = controls;
     question.moodle = normalizePlainObject(body.moodle);
     question.updatedAt = receivedAt;
@@ -1390,6 +1629,11 @@ function createService(options = {}) {
     }
 
     if (pathname !== "/v1/extension/ws" && pathname !== "/v1/operator/ws") {
+      socket.destroy();
+      return;
+    }
+    if (pathname === "/v1/operator/ws" && !isOperatorAuthorized(req)) {
+      socket.write("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
       socket.destroy();
       return;
     }
