@@ -2016,7 +2016,7 @@ function formatSessionTitle(session) {
 
 function formatSessionCardTitle(session) {
   const displayId = session.displayId ? `#${formatSessionDisplayId(session.displayId)}` : session.sessionId;
-  return session.userLabel ? `${displayId} ${session.userLabel}` : displayId;
+  return displayId;
 }
 
 function formatSessionDisplayId(displayId) {

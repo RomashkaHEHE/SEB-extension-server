@@ -236,14 +236,14 @@ textarea {
 }
 
 .session-item {
-  flex: 0 0 clamp(170px, 18vw, 240px);
-  min-height: 50px;
+  flex: 0 0 clamp(116px, 12vw, 150px);
+  min-height: 44px;
   display: grid;
-  gap: 3px;
+  gap: 2px;
   text-align: left;
   border-color: transparent;
   border-radius: 6px;
-  padding: 7px 9px;
+  padding: 6px 8px;
   background: transparent;
 }
 
