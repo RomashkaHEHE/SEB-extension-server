@@ -93,7 +93,7 @@ button:hover {
   justify-content: center;
   border: 1px solid rgba(255, 255, 255, 0.16);
   border-radius: 6px;
-  background: #16856b;
+  background: #3f4447;
   color: #ffffff;
   font-weight: 650;
   line-height: 1;
@@ -104,7 +104,7 @@ button:hover {
 
 .landing-button:hover {
   border-color: rgba(255, 255, 255, 0.24);
-  background: #1b967a;
+  background: #4b5155;
   color: #ffffff;
   transform: translateY(-1px);
 }
