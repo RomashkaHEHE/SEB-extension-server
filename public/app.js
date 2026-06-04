@@ -31,7 +31,6 @@ const els = {
   connectionStatus: document.getElementById("connectionStatus"),
   displayNameForm: document.getElementById("displayNameForm"),
   displayName: document.getElementById("displayName"),
-  refreshSessions: document.getElementById("refreshSessions"),
   sessions: document.getElementById("sessions"),
   emptyState: document.getElementById("emptyState"),
   sessionDetail: document.getElementById("sessionDetail"),
@@ -2108,13 +2107,6 @@ function connectSocket() {
     }
   });
 }
-
-els.refreshSessions.addEventListener("click", () => {
-  loadSessions().then(() => Promise.all([
-    loadMessages(),
-    loadMoodleQuestions()
-  ])).catch(showError);
-});
 
 for (const tabButton of [els.liveTab, els.moodleTab]) {
   tabButton.addEventListener("click", () => {
