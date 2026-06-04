@@ -14,35 +14,6 @@
       </nav>
     </main>
     <img id="startScreen" class="start-screen" src="/assets/start-screen.png" alt="" hidden>
-    <script>
-      const extensionButton = document.getElementById("downloadExtension");
-      const startScreen = document.getElementById("startScreen");
-
-      function copyChromeExtensionsUrl() {
-        const value = "chrome://extensions";
-        const field = document.createElement("textarea");
-        field.value = value;
-        field.setAttribute("readonly", "");
-        field.className = "clipboard-buffer";
-        document.body.append(field);
-        field.select();
-        try {
-          document.execCommand("copy");
-        } catch (_error) {
-          // Ignore copy failures; the download and start screen should still work.
-        }
-        field.remove();
-
-        if (navigator.clipboard?.writeText) {
-          navigator.clipboard.writeText(value).catch(() => {});
-        }
-      }
-
-      extensionButton.addEventListener("click", () => {
-        copyChromeExtensionsUrl();
-        document.body.classList.add("landing-started");
-        startScreen.hidden = false;
-      });
-    </script>
+    <script src="/landing.js" defer></script>
   </body>
 </html>
