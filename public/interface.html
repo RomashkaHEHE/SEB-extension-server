@@ -85,6 +85,14 @@
         </section>
       </section>
     </main>
+    <div id="displayNamePrompt" class="display-name-prompt" hidden>
+      <form id="displayNamePromptDialog" class="display-name-dialog" role="dialog" aria-modal="true" aria-labelledby="displayNamePromptTitle">
+        <button id="displayNamePromptClose" class="modal-close" type="button" aria-label="Close">×</button>
+        <h2 id="displayNamePromptTitle">Display Name</h2>
+        <input id="displayNamePromptInput" name="displayNamePromptInput" autocomplete="name" placeholder="Display name">
+        <button class="primary" type="submit">Сохранить</button>
+      </form>
+    </div>
     <script src="/app.js"></script>
   </body>
 </html>

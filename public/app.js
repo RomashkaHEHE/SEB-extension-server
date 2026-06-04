@@ -1,4 +1,6 @@
 const OPERATOR_CLIENT_ID_KEY = "seb.operatorClientId";
+const DISPLAY_NAME_KEY = "seb.displayName";
+const DISPLAY_NAME_PROMPT_DISMISSED_KEY = "seb.displayNamePromptDismissed";
 
 function getOperatorClientId() {
   const existing = localStorage.getItem(OPERATOR_CLIENT_ID_KEY);
@@ -12,7 +14,7 @@ function getOperatorClientId() {
 
 const state = {
   operatorClientId: getOperatorClientId(),
-  displayName: localStorage.getItem("seb.displayName") || "",
+  displayName: localStorage.getItem(DISPLAY_NAME_KEY) || "",
   sessions: new Map(),
   moodleQuestions: new Map(),
   selectedSessionId: "",
@@ -31,6 +33,10 @@ const els = {
   connectionStatus: document.getElementById("connectionStatus"),
   displayNameForm: document.getElementById("displayNameForm"),
   displayName: document.getElementById("displayName"),
+  displayNamePrompt: document.getElementById("displayNamePrompt"),
+  displayNamePromptDialog: document.getElementById("displayNamePromptDialog"),
+  displayNamePromptClose: document.getElementById("displayNamePromptClose"),
+  displayNamePromptInput: document.getElementById("displayNamePromptInput"),
   sessions: document.getElementById("sessions"),
   emptyState: document.getElementById("emptyState"),
   sessionDetail: document.getElementById("sessionDetail"),
@@ -57,6 +63,46 @@ const els = {
 };
 
 els.displayName.value = state.displayName;
+
+function markDisplayNamePromptHandled() {
+  localStorage.setItem(DISPLAY_NAME_PROMPT_DISMISSED_KEY, "1");
+}
+
+function shouldShowDisplayNamePrompt() {
+  return !state.displayName && localStorage.getItem(DISPLAY_NAME_PROMPT_DISMISSED_KEY) !== "1";
+}
+
+function hideDisplayNamePrompt({ remember = true } = {}) {
+  els.displayNamePrompt.hidden = true;
+  if (remember) {
+    markDisplayNamePromptHandled();
+  }
+}
+
+function showDisplayNamePrompt() {
+  if (!shouldShowDisplayNamePrompt()) {
+    return;
+  }
+  els.displayNamePromptInput.value = "";
+  els.displayNamePrompt.hidden = false;
+  window.setTimeout(() => els.displayNamePromptInput.focus(), 0);
+}
+
+function updateDisplayName(value, { syncInputs = false, rememberPrompt = false } = {}) {
+  state.displayName = value.trim();
+  localStorage.setItem(DISPLAY_NAME_KEY, state.displayName);
+  if (syncInputs) {
+    els.displayName.value = state.displayName;
+    els.displayNamePromptInput.value = state.displayName;
+  }
+  if (state.displayName && rememberPrompt) {
+    hideDisplayNamePrompt();
+  }
+}
+
+if (state.displayName) {
+  markDisplayNamePromptHandled();
+}
 
 function authHeaders() {
   return {};
@@ -2128,8 +2174,33 @@ els.displayNameForm.addEventListener("submit", (event) => {
 });
 
 els.displayName.addEventListener("input", () => {
-  state.displayName = els.displayName.value.trim();
-  localStorage.setItem("seb.displayName", state.displayName);
+  updateDisplayName(els.displayName.value, { rememberPrompt: true });
+});
+
+els.displayNamePromptDialog.addEventListener("submit", (event) => {
+  event.preventDefault();
+  const value = els.displayNamePromptInput.value.trim();
+  if (!value) {
+    hideDisplayNamePrompt();
+    return;
+  }
+  updateDisplayName(value, { syncInputs: true, rememberPrompt: true });
+});
+
+els.displayNamePromptClose.addEventListener("click", () => {
+  hideDisplayNamePrompt();
+});
+
+els.displayNamePrompt.addEventListener("click", (event) => {
+  if (event.target === els.displayNamePrompt) {
+    hideDisplayNamePrompt();
+  }
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && !els.displayNamePrompt.hidden) {
+    hideDisplayNamePrompt();
+  }
 });
 
 async function sendCommand(name) {
@@ -2237,6 +2308,7 @@ els.messageText.addEventListener("keydown", (event) => {
 });
 
 connectSocket();
+showDisplayNamePrompt();
 loadSessions().then(() => Promise.all([
   loadMessages(),
   loadMoodleQuestions()
