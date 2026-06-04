@@ -467,7 +467,8 @@ function createService(options = {}) {
       moodle: question.moodle || {},
       receivedAt: question.receivedAt,
       updatedAt: question.updatedAt,
-      latestAnswer: question.latestAnswer || null
+      latestAnswer: question.latestAnswer || null,
+      latestDraft: serializeMoodleDraft(question.latestDraft)
     };
   }
 
@@ -483,6 +484,23 @@ function createService(options = {}) {
       submit: Boolean(answer.submit),
       operatorDisplayName: answer.operatorDisplayName || "",
       createdAt: answer.createdAt
+    };
+  }
+
+  function serializeMoodleDraft(draft) {
+    if (!draft) {
+      return null;
+    }
+    return {
+      draftId: draft.draftId || "",
+      clientDraftId: draft.clientDraftId || "",
+      questionId: draft.questionId || "",
+      clientQuestionId: draft.clientQuestionId || "",
+      questionFingerprint: draft.questionFingerprint || "",
+      fields: Array.isArray(draft.fields) ? draft.fields : [],
+      operatorDisplayName: draft.operatorDisplayName || "",
+      operatorClientId: draft.operatorClientId || "",
+      updatedAt: draft.updatedAt || null
     };
   }
 
@@ -1417,6 +1435,46 @@ function createService(options = {}) {
           const message = JSON.parse(raw.toString("utf8"));
           if (message.type === "operator.ping") {
             sendJson(socket, { type: "server.pong", serverTime: nowIso() });
+            return;
+          }
+          if (message.type === "moodle.answer.draft.update") {
+            const session = getSession(typeof message.sessionId === "string" ? message.sessionId : "");
+            if (!session) {
+              sendJson(socket, { type: "server.error", error: { code: "session_not_found", message: "Session was not found" } });
+              return;
+            }
+            const question = getQuestion(session.sessionId, typeof message.questionId === "string" ? message.questionId : "");
+            if (!question) {
+              sendJson(socket, { type: "server.error", error: { code: "moodle_question_not_found", message: "Moodle question was not found" } });
+              return;
+            }
+            const rawFields = Array.isArray(message.fields) ? message.fields : [];
+            const fields = rawFields.slice(0, 400).map(normalizeAnswerField).filter((field) => (
+              field.name || field.id || field.selector || field.controlId
+            ));
+            if (!fields.length) {
+              sendJson(socket, { type: "server.error", error: { code: "invalid_moodle_draft", message: "At least one draft field is required" } });
+              return;
+            }
+            const draft = {
+              draftId: createId(),
+              clientDraftId: normalizeString(message.clientDraftId, 160),
+              questionId: question.questionId,
+              clientQuestionId: question.clientQuestionId || "",
+              questionFingerprint: question.questionFingerprint || "",
+              fields,
+              operatorId: "operator",
+              operatorDisplayName: normalizeDisplayName(message.operatorDisplayName) || "Operator",
+              operatorClientId: normalizeString(message.operatorClientId, 160),
+              updatedAt: nowIso()
+            };
+            question.latestDraft = draft;
+            save();
+            broadcastOperators({
+              type: "moodle.answer.draft.updated",
+              sessionId: session.sessionId,
+              ...serializeMoodleDraft(draft)
+            });
           }
         } catch {
           sendJson(socket, { type: "server.error", error: { code: "invalid_json", message: "Invalid JSON" } });

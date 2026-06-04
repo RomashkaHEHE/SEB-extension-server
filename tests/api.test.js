@@ -617,3 +617,106 @@ test("moodle question snapshots and answers are forwarded over websockets", asyn
     fs.rmSync(dataDir, { recursive: true, force: true });
   }
 });
+
+test("moodle answer drafts are synchronized between operators without sending to extension", async () => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "seb-server-"));
+  const service = createService({
+    host: "127.0.0.1",
+    port: 0,
+    dataDir,
+    publicBaseUrl: ""
+  });
+  const baseUrl = await listen(service.server);
+  const wsBaseUrl = baseUrl.replace(/^http:/, "ws:");
+  const sockets = [];
+
+  try {
+    const createResponse = await fetch(`${baseUrl}/v1/extension/sessions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        installId: "install-moodle-draft",
+        domain: "exam-draft.urfu.ru",
+        capabilities: ["moodle.question_snapshot"]
+      })
+    });
+    assert.equal(createResponse.status, 201);
+    const created = await createResponse.json();
+
+    const questionResponse = await fetch(`${baseUrl}/v1/extension/sessions/${created.sessionId}/moodle/questions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${created.extensionToken}`
+      },
+      body: JSON.stringify({
+        clientQuestionId: "attempt-draft-slot-1",
+        pageUrl: "https://exam-draft.urfu.ru/mod/quiz/attempt.php?attempt=1",
+        questionType: "shortanswer",
+        questionFingerprint: "qdraft:1",
+        html: "<div class=\"que shortanswer\"><input id=\"answer-1\" name=\"q42:1_answer\" type=\"text\"></div>",
+        controls: [{
+          name: "q42:1_answer",
+          id: "answer-1",
+          type: "text"
+        }]
+      })
+    });
+    assert.equal(questionResponse.status, 201);
+    const questionCreated = await questionResponse.json();
+
+    const operatorSocketA = new WebSocket(`${wsBaseUrl}/v1/operator/ws`);
+    const operatorSocketB = new WebSocket(`${wsBaseUrl}/v1/operator/ws`);
+    sockets.push(operatorSocketA, operatorSocketB);
+    const operatorHelloA = waitForJson(operatorSocketA, (message) => message.type === "server.hello");
+    const operatorHelloB = waitForJson(operatorSocketB, (message) => message.type === "server.hello");
+    await Promise.all([
+      waitForOpen(operatorSocketA),
+      waitForOpen(operatorSocketB)
+    ]);
+    await Promise.all([
+      operatorHelloA,
+      operatorHelloB
+    ]);
+
+    const draftEvent = waitForJson(operatorSocketB, (message) => (
+      message.type === "moodle.answer.draft.updated"
+      && message.sessionId === created.sessionId
+      && message.questionId === questionCreated.questionId
+    ));
+    operatorSocketA.send(JSON.stringify({
+      type: "moodle.answer.draft.update",
+      sessionId: created.sessionId,
+      questionId: questionCreated.questionId,
+      clientDraftId: "draft-client-1",
+      operatorClientId: "operator-a",
+      operatorDisplayName: "Roman",
+      fields: [{
+        name: "q42:1_answer",
+        id: "answer-1",
+        selector: "#answer-1",
+        type: "text",
+        value: "123"
+      }]
+    }));
+
+    const draft = await draftEvent;
+    assert.equal(draft.clientDraftId, "draft-client-1");
+    assert.equal(draft.operatorClientId, "operator-a");
+    assert.equal(draft.operatorDisplayName, "Roman");
+    assert.equal(draft.fields[0].value, "123");
+
+    const questionGetResponse = await fetch(`${baseUrl}/v1/operator/sessions/${created.sessionId}/moodle/questions/${questionCreated.questionId}`);
+    assert.equal(questionGetResponse.status, 200);
+    const question = await questionGetResponse.json();
+    assert.equal(question.latestDraft.clientDraftId, "draft-client-1");
+    assert.equal(question.latestDraft.fields[0].value, "123");
+    assert.equal((question.answers || []).length, 0);
+  } finally {
+    for (const socket of sockets) {
+      socket.close();
+    }
+    await close(service.server);
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  }
+});

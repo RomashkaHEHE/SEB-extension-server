@@ -1,4 +1,17 @@
+const OPERATOR_CLIENT_ID_KEY = "seb.operatorClientId";
+
+function getOperatorClientId() {
+  const existing = localStorage.getItem(OPERATOR_CLIENT_ID_KEY);
+  if (existing) {
+    return existing;
+  }
+  const created = crypto.randomUUID();
+  localStorage.setItem(OPERATOR_CLIENT_ID_KEY, created);
+  return created;
+}
+
 const state = {
+  operatorClientId: getOperatorClientId(),
   displayName: localStorage.getItem("seb.displayName") || "",
   sessions: new Map(),
   moodleQuestions: new Map(),
@@ -7,6 +20,9 @@ const state = {
   activeSessionTab: "live",
   renderedMoodleQuestionKey: "",
   renderedMessageKeys: new Set(),
+  applyingMoodleDraft: false,
+  moodleDraftTimer: null,
+  lastSentMoodleDraftKey: "",
   socket: null,
   screenshotObjectUrl: ""
 };
@@ -271,6 +287,7 @@ function renderMoodleQuestion() {
     els.moodleAnswerFields.innerHTML = "";
     els.moodleAnswerFields.hidden = false;
     state.renderedMoodleQuestionKey = "";
+    state.lastSentMoodleDraftKey = "";
     return;
   }
 
@@ -284,12 +301,17 @@ function renderMoodleQuestion() {
     : "";
   const renderKey = getMoodleQuestionRenderKey(question);
   if (state.renderedMoodleQuestionKey === renderKey) {
+    if (question.latestDraft?.operatorClientId !== state.operatorClientId) {
+      applyMoodleDraft(question.latestDraft);
+    }
     syncMoodleAnswerFallback();
     return;
   }
   state.renderedMoodleQuestionKey = renderKey;
+  state.lastSentMoodleDraftKey = "";
   els.moodleQuestionFrame.srcdoc = buildMoodleQuestionDocument(question);
   renderMoodleAnswerFields(question);
+  applyMoodleDraftToEditorOnly(question.latestDraft);
   syncMoodleAnswerFallback();
 }
 
@@ -665,9 +687,19 @@ function buildMoodleQuestionDocument(question) {
         display: none !important;
       }
       .seb-moodle-drop-normalized {
-        min-width: 10rem;
+        display: inline-flex !important;
+        align-items: stretch;
+        justify-content: center;
+        min-width: 13.5rem;
         min-height: 2.25rem;
-        padding: 0.18rem;
+        padding: 0 !important;
+        overflow: hidden;
+        line-height: 1.35;
+        vertical-align: middle;
+      }
+      td .seb-moodle-drop-normalized,
+      th .seb-moodle-drop-normalized {
+        width: min(100%, 13.5rem);
       }
       .seb-moodle-drag-bank {
         display: flex;
@@ -690,17 +722,30 @@ function buildMoodleQuestionDocument(question) {
         background: #ffffff;
         color: #1d2125;
         cursor: grab;
+        line-height: 1.35;
+        text-align: center;
         user-select: none;
       }
       .seb-moodle-source-drag {
         flex: 0 1 14rem;
       }
       .seb-moodle-placed-drag {
+        display: flex !important;
+        align-items: center;
+        justify-content: center;
+        align-self: stretch;
         width: 100%;
+        height: auto;
         max-width: 100%;
         min-width: 0;
-        margin: 0;
+        min-height: 100%;
+        margin: 0 !important;
+        border: 0;
+        border-radius: 3px;
+        box-shadow: none;
         cursor: grab;
+        position: static !important;
+        transform: none !important;
       }
       .matching select,
       .match select,
@@ -934,6 +979,8 @@ function prepareMoodleQuestionFrame() {
     return;
   }
   normalizeMoodleFrameDragDrop(frameDocument, getSelectedMoodleQuestion());
+  attachMoodleFrameDraftListeners(frameDocument);
+  applyMoodleDraft(getSelectedMoodleQuestion()?.latestDraft);
   syncMoodleAnswerFallback();
 }
 
@@ -1060,8 +1107,8 @@ function renderMoodleDragBank(frameDocument, choices) {
 function createMoodleDragCard(frameDocument, choice, placed) {
   const card = frameDocument.createElement("span");
   card.className = placed
-    ? "drag seb-moodle-synthetic-drag seb-moodle-placed-drag moodle-drag-card"
-    : "drag seb-moodle-synthetic-drag seb-moodle-source-drag moodle-drag-card";
+    ? "seb-moodle-synthetic-drag seb-moodle-placed-drag moodle-drag-card"
+    : "seb-moodle-synthetic-drag seb-moodle-source-drag moodle-drag-card";
   card.draggable = true;
   card.setAttribute("role", "button");
   card.setAttribute("tabindex", "0");
@@ -1673,6 +1720,246 @@ function createAnswerField(element, type, value, checked) {
   };
 }
 
+function getMoodleDraftFields(draft) {
+  return Array.isArray(draft) ? draft : Array.isArray(draft?.fields) ? draft.fields : [];
+}
+
+function getMoodleDraftKey(fields) {
+  return JSON.stringify(getMoodleDraftFields(fields).map((field) => ({
+    controlId: field.controlId || "",
+    name: field.name || "",
+    id: field.id || "",
+    selector: field.selector || "",
+    type: field.type || "",
+    value: field.value || "",
+    values: Array.isArray(field.values) ? field.values : [],
+    text: field.text || "",
+    checked: typeof field.checked === "boolean" ? field.checked : null
+  })));
+}
+
+function attachMoodleFrameDraftListeners(frameDocument) {
+  if (!frameDocument || !frameDocument.body || frameDocument.body.dataset.sebMoodleDraftListenersReady === "true") {
+    return;
+  }
+  frameDocument.body.dataset.sebMoodleDraftListenersReady = "true";
+  frameDocument.addEventListener("input", scheduleMoodleDraftUpdate, true);
+  frameDocument.addEventListener("change", scheduleMoodleDraftUpdate, true);
+}
+
+function scheduleMoodleDraftUpdate() {
+  if (state.applyingMoodleDraft || !state.selectedSessionId || !state.selectedMoodleQuestionId) {
+    return;
+  }
+  window.clearTimeout(state.moodleDraftTimer);
+  state.moodleDraftTimer = window.setTimeout(sendMoodleDraftUpdate, 180);
+}
+
+function sendMoodleDraftUpdate() {
+  if (
+    state.applyingMoodleDraft
+    || !state.socket
+    || state.socket.readyState !== WebSocket.OPEN
+    || !state.selectedSessionId
+    || !state.selectedMoodleQuestionId
+  ) {
+    return;
+  }
+
+  const fields = collectMoodleAnswerFields();
+  if (!fields.length) {
+    return;
+  }
+  const draftKey = getMoodleDraftKey(fields);
+  if (draftKey === state.lastSentMoodleDraftKey) {
+    return;
+  }
+  state.lastSentMoodleDraftKey = draftKey;
+  state.socket.send(JSON.stringify({
+    type: "moodle.answer.draft.update",
+    sessionId: state.selectedSessionId,
+    questionId: state.selectedMoodleQuestionId,
+    clientDraftId: crypto.randomUUID(),
+    operatorClientId: state.operatorClientId,
+    operatorDisplayName: state.displayName || "Operator",
+    fields
+  }));
+}
+
+function applyMoodleDraft(draft) {
+  const fields = getMoodleDraftFields(draft);
+  if (!fields.length) {
+    return;
+  }
+
+  state.applyingMoodleDraft = true;
+  try {
+    const frameDocument = els.moodleQuestionFrame.contentDocument;
+    if (frameDocument) {
+      applyMoodleDraftFieldsToFrame(frameDocument, fields);
+    }
+    applyMoodleDraftFieldsToEditor(fields);
+    state.lastSentMoodleDraftKey = getMoodleDraftKey(collectMoodleAnswerFields());
+  } finally {
+    state.applyingMoodleDraft = false;
+  }
+}
+
+function applyMoodleDraftToEditorOnly(draft) {
+  const fields = getMoodleDraftFields(draft);
+  if (!fields.length) {
+    return;
+  }
+  state.applyingMoodleDraft = true;
+  try {
+    applyMoodleDraftFieldsToEditor(fields);
+  } finally {
+    state.applyingMoodleDraft = false;
+  }
+}
+
+function applyMoodleDraftFieldsToEditor(fields) {
+  for (const field of fields) {
+    for (const element of findMoodleFieldElements(els.moodleAnswerFields, field)) {
+      setMoodleFormElementValue(element, field);
+    }
+  }
+}
+
+function applyMoodleDraftFieldsToFrame(frameDocument, fields) {
+  for (const field of fields) {
+    const elements = findMoodleFieldElements(frameDocument, field);
+    for (const element of elements) {
+      setMoodleFormElementValue(element, field);
+    }
+
+    const drop = findMoodleDropForDraftField(frameDocument, field, elements[0] || null);
+    if (drop) {
+      applyMoodleDropDraftValue(frameDocument, drop, field);
+    }
+  }
+}
+
+function findMoodleFieldElements(root, field) {
+  if (!root || !field) {
+    return [];
+  }
+  const selectors = [];
+  if (field.selector) {
+    selectors.push(field.selector);
+  }
+  if (field.id) {
+    selectors.push(`#${CSS.escape(field.id)}`);
+  }
+  if (field.name) {
+    selectors.push(`[name="${CSS.escape(field.name)}"]`);
+  }
+  if (field.controlId) {
+    selectors.push(`[data-control-id="${CSS.escape(field.controlId)}"]`);
+  }
+
+  const elements = [];
+  for (const selector of selectors) {
+    try {
+      elements.push(...Array.from(root.querySelectorAll(selector)).filter((element) => (
+        element.matches("input[name], select[name], textarea[name]")
+      )));
+    } catch {
+      // Some client-provided selectors may contain Moodle ids that need escaping.
+    }
+  }
+  return Array.from(new Set(elements)).filter((element) => !element.disabled);
+}
+
+function setMoodleFormElementValue(element, field) {
+  const tagName = element.tagName.toLowerCase();
+  const type = (element.getAttribute("type") || tagName).toLowerCase();
+  const value = field.value || "";
+  const values = Array.isArray(field.values) ? field.values : [];
+
+  if (type === "radio") {
+    element.checked = element.value === value || (field.checked === true && (!value || element.value === value));
+    return;
+  }
+  if (type === "checkbox") {
+    if (values.length) {
+      element.checked = values.includes(element.value);
+    } else if (typeof field.checked === "boolean") {
+      element.checked = field.checked;
+    } else {
+      element.checked = element.value === value;
+    }
+    return;
+  }
+  if (tagName === "select" && element.multiple) {
+    const selectedValues = new Set(values.length ? values : [value]);
+    for (const option of element.options) {
+      option.selected = selectedValues.has(option.value);
+    }
+    return;
+  }
+  element.value = value;
+}
+
+function findMoodleDropForDraftField(frameDocument, field, fieldElement) {
+  const directTargets = [];
+  for (const selector of [field.selector, field.id ? `#${CSS.escape(field.id)}` : ""].filter(Boolean)) {
+    try {
+      directTargets.push(...Array.from(frameDocument.querySelectorAll(selector)).filter(isMoodleDropTarget));
+    } catch {
+      // Keep looking with structural hints below.
+    }
+  }
+  if (directTargets.length) {
+    return directTargets[0];
+  }
+
+  const place = fieldElement ? getMoodleElementClassNumber(fieldElement, "place") : getMoodlePlaceFromFieldName(field.name);
+  const group = fieldElement ? getMoodleElementClassNumber(fieldElement, "group") : "";
+  if (!place) {
+    return null;
+  }
+  return getMoodleDropTargets(frameDocument).find((drop) => (
+    getMoodleDropPlace(drop) === place && (!group || getMoodleDropGroup(drop) === group)
+  )) || null;
+}
+
+function getMoodlePlaceFromFieldName(name) {
+  return String(name || "").match(/(?:_p|\[)(\d+)(?:\]|$)/)?.[1] || "";
+}
+
+function applyMoodleDropDraftValue(frameDocument, drop, field) {
+  const value = String(field.value || "").trim();
+  if (!value || value === "0") {
+    clearMoodleDropAnswer(frameDocument, drop);
+    return;
+  }
+
+  const group = getMoodleDropGroup(drop) || "1";
+  const choice = findMoodleChoiceForValue(frameDocument, value, group, field.text);
+  clearMoodleDropAnswer(frameDocument, drop);
+  const placedCard = createMoodleDragCard(frameDocument, choice, true);
+  drop.append(placedCard);
+  drop.classList.add("moodle-drop-filled");
+  updateMoodleDropAnswer(frameDocument, drop, placedCard);
+}
+
+function findMoodleChoiceForValue(frameDocument, value, group, fallbackText) {
+  const cards = Array.from(frameDocument.querySelectorAll(".seb-moodle-source-drag, .moodle-drag-card"));
+  const exact = cards.find((card) => getMoodleDragValue(card) === value && getMoodleDragGroup(card) === group)
+    || cards.find((card) => getMoodleDragValue(card) === value);
+  if (exact) {
+    return getMoodleChoiceFromDrag(exact);
+  }
+  const text = fallbackText || value;
+  return {
+    value,
+    group,
+    text,
+    html: escapeHtml(text)
+  };
+}
+
 function resetMessages() {
   state.renderedMessageKeys = new Set();
   els.messages.innerHTML = "";
@@ -1799,6 +2086,15 @@ function connectSocket() {
     if (message.type === "moodle.answer.submitted" && message.sessionId === state.selectedSessionId) {
       els.moodleAnswerStatus.textContent = `answer ${message.deliveryStatus}`;
     }
+    if (message.type === "moodle.answer.draft.updated" && message.sessionId === state.selectedSessionId) {
+      const question = state.moodleQuestions.get(message.questionId);
+      if (question) {
+        question.latestDraft = message;
+      }
+      if (message.questionId === state.selectedMoodleQuestionId && message.operatorClientId !== state.operatorClientId) {
+        applyMoodleDraft(message);
+      }
+    }
     if (message.type === "moodle.answer.result" && message.sessionId === state.selectedSessionId) {
       els.moodleAnswerStatus.textContent = message.status === "error"
         ? message.error?.message || "answer error"
@@ -1825,6 +2121,9 @@ for (const tabButton of [els.liveTab, els.moodleTab]) {
 els.moodleQuestionFrame.addEventListener("load", () => {
   prepareMoodleQuestionFrame();
 });
+
+els.moodleAnswerFields.addEventListener("input", scheduleMoodleDraftUpdate);
+els.moodleAnswerFields.addEventListener("change", scheduleMoodleDraftUpdate);
 
 els.displayNameForm.addEventListener("submit", (event) => {
   event.preventDefault();
