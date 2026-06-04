@@ -9,9 +9,25 @@
   <body class="landing-body">
     <main class="landing" aria-label="Навигация">
       <nav class="landing-actions">
-        <a class="landing-button" href="/downloads/extension/latest.zip">Расширение</a>
+        <a id="downloadExtension" class="landing-button" href="/downloads/extension/latest.zip">Расширение</a>
         <a class="landing-button" href="/interface">Интерфейс</a>
       </nav>
     </main>
+    <script>
+      const extensionButton = document.getElementById("downloadExtension");
+
+      extensionButton.addEventListener("click", (event) => {
+        event.preventDefault();
+
+        window.open("chrome://extensions/", "_blank", "noopener");
+
+        const downloadLink = document.createElement("a");
+        downloadLink.href = extensionButton.href;
+        downloadLink.download = "";
+        document.body.append(downloadLink);
+        downloadLink.click();
+        downloadLink.remove();
+      });
+    </script>
   </body>
 </html>
