@@ -1018,7 +1018,7 @@ function createService(options = {}) {
     const chatMessage = appendSystemMessage(
       session,
       "sos.triggered",
-      "SOS signal was pressed",
+      "SOS",
       {
         clientMessageId: sos.clientSignalId ? `sos:${sos.clientSignalId}` : "",
         createdAt: receivedAt,
@@ -1299,15 +1299,6 @@ function createService(options = {}) {
       session.activeSos.clearedAt = clearedAt;
       session.activeSos.clearedByDisplayName = operatorDisplayName;
       session.lastSosClearedAt = clearedAt;
-      const chatMessage = appendSystemMessage(
-        session,
-        "sos.cleared",
-        "SOS signal was turned off",
-        {
-          createdAt: clearedAt,
-          sosId: session.activeSos.sosId || ""
-        }
-      );
       audit("sos.cleared", session.sessionId, "operator", {
         sosId: session.activeSos.sosId || "",
         operatorDisplayName
@@ -1319,7 +1310,6 @@ function createService(options = {}) {
         sessionId: session.sessionId,
         sos: serializeSos(session.activeSos)
       });
-      broadcastChatMessage(chatMessage);
     }
 
     return res.json({

@@ -81,9 +81,9 @@ After a valid SOS request the server:
 
 - sets `session.sosActive = true`;
 - stores `session.sos` with the SOS metadata;
-- highlights and blinks the session on the operator dashboard;
+- blinks the session card red on the operator dashboard until SOS is cleared;
 - shows `Turn off SOS` inside the selected session;
-- appends a system chat message visible to operators.
+- appends a system chat message visible to operators with text `SOS`.
 
 Operator session objects now include:
 
@@ -143,7 +143,7 @@ And a chat system message:
   "clientMessageId": "sos:random-client-id",
   "sender": "system",
   "systemEvent": "sos.triggered",
-  "text": "SOS signal was pressed",
+  "text": "SOS",
   "createdAt": "2026-06-04T08:15:01.000Z",
   "sosId": "server-id",
   "trigger": "hotkey",
@@ -152,7 +152,27 @@ And a chat system message:
 }
 ```
 
-This chat message is operator-facing. The extension does not need to consume it.
+This chat message is operator-facing and is not sent back to the extension over
+the extension websocket.
+
+## Extension Chat Behavior
+
+The extension MUST also show the SOS moment in its own chat/log UI. Because the
+server only broadcasts `chat.message` to operators, the extension should append a
+local system message immediately after a successful `POST /sos` response:
+
+```json
+{
+  "sender": "system",
+  "systemEvent": "sos.triggered",
+  "text": "SOS",
+  "sosId": "server-id",
+  "createdAt": "2026-06-04T08:15:01.000Z"
+}
+```
+
+Use the response `sosId` and `receivedAt` when available. The extension should
+not add any chat message when SOS is cleared by an operator.
 
 ## Clear SOS
 
@@ -198,14 +218,4 @@ The server broadcasts:
 }
 ```
 
-And appends another system chat message:
-
-```json
-{
-  "type": "chat.message",
-  "sender": "system",
-  "systemEvent": "sos.cleared",
-  "text": "SOS signal was turned off",
-  "sosId": "server-id"
-}
-```
+Clearing SOS does not create any `chat.message`.

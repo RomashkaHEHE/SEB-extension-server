@@ -125,7 +125,7 @@ function renderSessions() {
     item.dataset.sessionId = session.sessionId;
     item.innerHTML = `
       <span class="session-line">
-        <span class="session-domain">${escapeHtml(formatSessionTitle(session))}</span>
+        <span class="session-domain">${escapeHtml(formatSessionCardTitle(session))}</span>
         ${session.sosActive ? '<span class="badge sos">SOS</span>' : ""}
       </span>
       <span class="session-time">${escapeHtml(formatSessionScreenshot(session))}</span>
@@ -2012,6 +2012,11 @@ function formatSessionTitle(session) {
   const displayId = session.displayId ? `#${formatSessionDisplayId(session.displayId)}` : session.sessionId;
   const label = session.domain || session.userLabel || session.sessionId;
   return `${displayId} ${label}`;
+}
+
+function formatSessionCardTitle(session) {
+  const displayId = session.displayId ? `#${formatSessionDisplayId(session.displayId)}` : session.sessionId;
+  return session.userLabel ? `${displayId} ${session.userLabel}` : displayId;
 }
 
 function formatSessionDisplayId(displayId) {

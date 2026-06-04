@@ -315,7 +315,7 @@ test("extension sos signal highlights session and can be cleared by operator", a
 
     const sosMessage = await sosChat;
     assert.equal(sosMessage.sender, "system");
-    assert.equal(sosMessage.text, "SOS signal was pressed");
+    assert.equal(sosMessage.text, "SOS");
     assert.equal(sosMessage.sosId, sosCreated.sosId);
 
     const sessionsResponse = await fetch(`${baseUrl}/v1/operator/sessions?status=active`);
@@ -333,11 +333,14 @@ test("extension sos signal highlights session and can be cleared by operator", a
     const clearEvent = waitForJson(operatorSocket, (message) => (
       message.type === "session.sos.cleared" && message.sessionId === created.sessionId
     ));
-    const clearChat = waitForJson(operatorSocket, (message) => (
+    const unexpectedClearChat = waitForJson(operatorSocket, (message) => (
       message.type === "chat.message"
       && message.sessionId === created.sessionId
       && message.systemEvent === "sos.cleared"
-    ));
+    )).then(
+      () => true,
+      () => false
+    );
     const clearResponse = await fetch(`${baseUrl}/v1/operator/sessions/${created.sessionId}/sos/clear`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -351,9 +354,7 @@ test("extension sos signal highlights session and can be cleared by operator", a
 
     const clearedPayload = await clearEvent;
     assert.equal(clearedPayload.sos.active, false);
-    const clearMessage = await clearChat;
-    assert.equal(clearMessage.sender, "system");
-    assert.equal(clearMessage.text, "SOS signal was turned off");
+    assert.equal(await unexpectedClearChat, false);
   } finally {
     for (const socket of sockets) {
       socket.close();
