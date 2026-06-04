@@ -5,6 +5,7 @@ const state = {
   selectedSessionId: "",
   selectedMoodleQuestionId: "",
   activeSessionTab: "live",
+  renderedMoodleQuestionKey: "",
   renderedMessageKeys: new Set(),
   socket: null,
   screenshotObjectUrl: ""
@@ -245,6 +246,17 @@ function getSelectedMoodleQuestion() {
   return question;
 }
 
+function getMoodleQuestionRenderKey(question) {
+  return [
+    question.questionId || "",
+    question.clientQuestionId || "",
+    question.questionFingerprint || "",
+    question.questionType || "",
+    question.html || "",
+    JSON.stringify(question.controls || [])
+  ].join("\n");
+}
+
 function renderMoodleQuestion() {
   const session = state.sessions.get(state.selectedSessionId);
   const question = getSelectedMoodleQuestion();
@@ -258,6 +270,7 @@ function renderMoodleQuestion() {
     els.moodleQuestionFrame.removeAttribute("srcdoc");
     els.moodleAnswerFields.innerHTML = "";
     els.moodleAnswerFields.hidden = false;
+    state.renderedMoodleQuestionKey = "";
     return;
   }
 
@@ -269,6 +282,12 @@ function renderMoodleQuestion() {
   els.moodleAnswerStatus.textContent = question.latestAnswer
     ? `last answer ${question.latestAnswer.status || question.latestAnswer.deliveryStatus}`
     : "";
+  const renderKey = getMoodleQuestionRenderKey(question);
+  if (state.renderedMoodleQuestionKey === renderKey) {
+    syncMoodleAnswerFallback();
+    return;
+  }
+  state.renderedMoodleQuestionKey = renderKey;
   els.moodleQuestionFrame.srcdoc = buildMoodleQuestionDocument(question);
   renderMoodleAnswerFields(question);
   syncMoodleAnswerFallback();
@@ -641,11 +660,23 @@ function buildMoodleQuestionDocument(question) {
         border-style: solid;
         background: #ffffff;
       }
+      .seb-moodle-raw-drag-hidden,
+      .seb-moodle-hidden-drag-home {
+        display: none !important;
+      }
+      .seb-moodle-drop-normalized {
+        min-width: 10rem;
+        min-height: 2.25rem;
+        padding: 0.18rem;
+      }
       .seb-moodle-drag-bank {
         display: flex;
         flex-wrap: wrap;
         gap: 0.45rem;
         margin: 1rem 0 0;
+      }
+      .seb-moodle-drag-bank[hidden] {
+        display: none !important;
       }
       .seb-moodle-synthetic-drag {
         display: inline-flex;
@@ -660,6 +691,16 @@ function buildMoodleQuestionDocument(question) {
         color: #1d2125;
         cursor: grab;
         user-select: none;
+      }
+      .seb-moodle-source-drag {
+        flex: 0 1 14rem;
+      }
+      .seb-moodle-placed-drag {
+        width: 100%;
+        max-width: 100%;
+        min-width: 0;
+        margin: 0;
+        cursor: grab;
       }
       .matching select,
       .match select,
@@ -892,48 +933,146 @@ function prepareMoodleQuestionFrame() {
   if (!frameDocument) {
     return;
   }
-  inflateMoodleSyntheticDragControls(frameDocument, getSelectedMoodleQuestion());
-  initializeMoodleFrameDragDrop(frameDocument);
+  normalizeMoodleFrameDragDrop(frameDocument, getSelectedMoodleQuestion());
   syncMoodleAnswerFallback();
 }
 
-function inflateMoodleSyntheticDragControls(frameDocument, question) {
-  if (!frameDocument.body || frameDocument.body.dataset.sebMoodleSyntheticDragReady === "true") {
+function normalizeMoodleFrameDragDrop(frameDocument, question) {
+  if (!frameDocument.body || frameDocument.body.dataset.sebMoodleDragReady === "true") {
     return;
   }
-  frameDocument.body.dataset.sebMoodleSyntheticDragReady = "true";
+  frameDocument.body.dataset.sebMoodleDragReady = "true";
 
   const dropTargets = getMoodleDropTargets(frameDocument);
-  if (!dropTargets.length || getMoodleDragItems(frameDocument).length) {
+  if (!dropTargets.length) {
     return;
   }
 
-  const choices = getMoodleSyntheticDragChoices(question);
+  const choices = collectMoodleDragChoices(frameDocument, question);
   if (!choices.length) {
     return;
   }
 
+  hideMoodleRawDragSources(frameDocument);
+  for (const drop of dropTargets) {
+    normalizeMoodleDropTarget(frameDocument, drop, choices);
+  }
+  renderMoodleDragBank(frameDocument, choices);
+  initializeMoodleFrameDragDrop(frameDocument);
+}
+
+function collectMoodleDragChoices(frameDocument, question) {
+  const choices = [];
+  const appendChoice = (rawChoice) => {
+    const text = normalizeMoodleChoiceText(rawChoice.text || rawChoice.value);
+    if (!text || looksLikeMoodlePlaceholderChoice(text)) {
+      return;
+    }
+    const value = String(rawChoice.value || text).trim();
+    const group = String(rawChoice.group || "1").trim() || "1";
+    choices.push({
+      value,
+      group,
+      text,
+      html: rawChoice.html || escapeHtml(text)
+    });
+  };
+
+  for (const drag of getMoodleDragItems(frameDocument).filter((element) => !element.classList.contains("seb-moodle-synthetic-drag"))) {
+    appendChoice({
+      value: getMoodleDragValue(drag),
+      group: getMoodleDragGroup(drag),
+      text: drag.textContent,
+      html: drag.innerHTML.trim() || escapeHtml(drag.textContent.trim())
+    });
+  }
+
+  for (const choice of getMoodleSyntheticDragChoices(question)) {
+    appendChoice(choice);
+  }
+
+  const seen = new Set();
+  return choices.filter((choice) => {
+    const key = `${choice.group}::${normalizeMoodleChoiceText(choice.text).toLowerCase()}`;
+    if (seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
+}
+
+function hideMoodleRawDragSources(frameDocument) {
+  for (const drag of getMoodleDragItems(frameDocument)) {
+    if (!drag.classList.contains("seb-moodle-synthetic-drag")) {
+      drag.classList.add("seb-moodle-raw-drag-hidden");
+    }
+  }
+
+  frameDocument.querySelectorAll(".answercontainer, [class*='draggrouphomes'], .draghomes").forEach((element) => {
+    if (element.querySelector(".seb-moodle-raw-drag-hidden")) {
+      element.classList.add("seb-moodle-hidden-drag-home");
+    }
+  });
+}
+
+function normalizeMoodleDropTarget(frameDocument, drop, choices) {
+  ensureMoodleElementId(drop, "drop-target");
+  drop.classList.add("seb-moodle-drop-normalized");
+  drop.setAttribute("tabindex", drop.getAttribute("tabindex") || "0");
+  drop.setAttribute("role", drop.getAttribute("role") || "button");
+
+  const fields = findMoodleDropFields(frameDocument, drop);
+  const currentValue = fields.map((field) => field.value).find((value) => value && value !== "0") || "";
+  if (!currentValue) {
+    return;
+  }
+
+  const group = getMoodleDropGroup(drop);
+  const choice = choices.find((candidate) => (
+    candidate.value === currentValue && (!group || candidate.group === group)
+  )) || choices.find((candidate) => candidate.value === currentValue);
+  if (choice) {
+    const card = createMoodleDragCard(frameDocument, choice, true);
+    drop.append(card);
+    drop.classList.add("moodle-drop-filled");
+    drop.dataset.sebDropValue = choice.value;
+    drop.dataset.sebDropText = choice.text;
+  }
+}
+
+function renderMoodleDragBank(frameDocument, choices) {
+  frameDocument.querySelectorAll("[data-seb-drag-bank='true']").forEach((element) => element.remove());
   const bank = frameDocument.createElement("div");
   bank.className = "seb-moodle-drag-bank";
   bank.dataset.sebDragBank = "true";
   bank.setAttribute("aria-label", "Drag choices");
 
   for (const choice of choices) {
-    const card = frameDocument.createElement("span");
-    card.className = "drag seb-moodle-synthetic-drag";
-    card.draggable = true;
-    card.setAttribute("role", "button");
-    card.setAttribute("tabindex", "0");
-    card.dataset.value = choice.value;
-    card.dataset.dragid = choice.value;
-    card.dataset.choice = choice.value;
-    card.textContent = choice.text;
-    bank.append(card);
+    bank.append(createMoodleDragCard(frameDocument, choice, false));
   }
 
   const anchor = frameDocument.querySelector(".answer, .ablock, .formulation, .content, .moodle-question-root")
     || frameDocument.body;
   anchor.append(bank);
+}
+
+function createMoodleDragCard(frameDocument, choice, placed) {
+  const card = frameDocument.createElement("span");
+  card.className = placed
+    ? "drag seb-moodle-synthetic-drag seb-moodle-placed-drag moodle-drag-card"
+    : "drag seb-moodle-synthetic-drag seb-moodle-source-drag moodle-drag-card";
+  card.draggable = true;
+  card.setAttribute("role", "button");
+  card.setAttribute("tabindex", "0");
+  card.dataset.value = choice.value;
+  card.dataset.dragid = choice.value;
+  card.dataset.choice = choice.value;
+  card.dataset.group = choice.group || "1";
+  card.dataset.text = choice.text;
+  card.innerHTML = choice.html || escapeHtml(choice.text);
+  ensureMoodleElementId(card, placed ? "placed-card" : "source-card");
+  return card;
 }
 
 function getMoodleSyntheticDragChoices(question) {
@@ -948,7 +1087,7 @@ function getMoodleSyntheticDragChoices(question) {
       return;
     }
     const value = String(rawValue || text).trim();
-    choices.push({ value, text });
+    choices.push({ value, text, group: "1", html: escapeHtml(text) });
   };
 
   for (const control of Array.isArray(question.controls) ? question.controls : []) {
@@ -1011,78 +1150,179 @@ function looksLikeMoodlePlaceholderChoice(text) {
 }
 
 function initializeMoodleFrameDragDrop(frameDocument) {
-  if (!frameDocument.body || frameDocument.body.dataset.sebMoodleDragReady === "true") {
+  if (!frameDocument.body || frameDocument.body.dataset.sebMoodleDragEventsReady === "true") {
     return;
   }
-  frameDocument.body.dataset.sebMoodleDragReady = "true";
-
-  const dragItems = getMoodleDragItems(frameDocument);
-  const dropTargets = getMoodleDropTargets(frameDocument);
+  frameDocument.body.dataset.sebMoodleDragEventsReady = "true";
   let selectedDrag = null;
 
-  for (const drag of dragItems) {
-    ensureMoodleElementId(drag, "drag-card");
-    drag.draggable = true;
-    drag.classList.add("moodle-drag-card");
-    drag.setAttribute("tabindex", drag.getAttribute("tabindex") || "0");
-    drag.dataset.sebDragOriginId = ensureMoodleElementId(drag.parentElement, "drag-origin");
+  frameDocument.body.addEventListener("dragstart", (event) => {
+    const drag = getClosestMoodleInteractiveDrag(event.target);
+    if (!drag) {
+      return;
+    }
+    selectedDrag = drag;
+    markSelectedMoodleDrag(frameDocument, selectedDrag);
+    drag.classList.add("moodle-dragging");
+    event.dataTransfer?.setData("text/plain", drag.id || getMoodleDragValue(drag));
+    event.dataTransfer?.setData("application/x-seb-moodle-drag-id", drag.id);
+    if (event.dataTransfer) {
+      event.dataTransfer.effectAllowed = "copyMove";
+    }
+  });
 
+  frameDocument.body.addEventListener("dragend", (event) => {
+    const drag = getClosestMoodleInteractiveDrag(event.target);
+    drag?.classList.remove("moodle-dragging");
+    clearActiveMoodleDrops(frameDocument);
+  });
+
+  frameDocument.body.addEventListener("dragover", (event) => {
+    const drop = getClosestMoodleDropTarget(event.target);
+    if (!drop) {
+      return;
+    }
+    event.preventDefault();
+    drop.classList.add("moodle-drop-active");
+    if (event.dataTransfer) {
+      event.dataTransfer.dropEffect = "copy";
+    }
+  });
+
+  frameDocument.body.addEventListener("dragleave", (event) => {
+    const drop = getClosestMoodleDropTarget(event.target);
+    drop?.classList.remove("moodle-drop-active");
+  });
+
+  frameDocument.body.addEventListener("drop", (event) => {
+    const drop = getClosestMoodleDropTarget(event.target);
+    if (!drop) {
+      return;
+    }
+    event.preventDefault();
+    const dragId = event.dataTransfer?.getData("application/x-seb-moodle-drag-id") || "";
+    const drag = dragId ? frameDocument.getElementById(dragId) : selectedDrag;
+    placeMoodleDragCard(frameDocument, drag, drop);
+    selectedDrag = null;
+    markSelectedMoodleDrag(frameDocument, selectedDrag);
+    clearActiveMoodleDrops(frameDocument);
+  });
+
+  frameDocument.body.addEventListener("click", (event) => {
+    const drag = getClosestMoodleInteractiveDrag(event.target);
+    if (drag) {
+      event.preventDefault();
+      selectedDrag = selectedDrag === drag ? null : drag;
+      markSelectedMoodleDrag(frameDocument, selectedDrag);
+      return;
+    }
+
+    const drop = getClosestMoodleDropTarget(event.target);
+    if (drop && selectedDrag) {
+      event.preventDefault();
+      placeMoodleDragCard(frameDocument, selectedDrag, drop);
+      selectedDrag = null;
+      markSelectedMoodleDrag(frameDocument, selectedDrag);
+    }
+  });
+
+  frameDocument.body.addEventListener("keydown", (event) => {
+    const drag = getClosestMoodleInteractiveDrag(event.target);
+    if (drag) {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        selectedDrag = selectedDrag === drag ? null : drag;
+        markSelectedMoodleDrag(frameDocument, selectedDrag);
+      }
+      return;
+    }
+
+    const drop = getClosestMoodleDropTarget(event.target);
+    if (!drop) {
+      return;
+    }
+    if ((event.key === "Enter" || event.key === " ") && selectedDrag) {
+      event.preventDefault();
+      placeMoodleDragCard(frameDocument, selectedDrag, drop);
+      selectedDrag = null;
+      markSelectedMoodleDrag(frameDocument, selectedDrag);
+    }
+    if (event.key === "Backspace" || event.key === "Delete") {
+      event.preventDefault();
+      clearMoodleDropAnswer(frameDocument, drop);
+    }
+  });
+
+  for (const drag of frameDocument.querySelectorAll(".moodle-drag-card")) {
+    if (drag.dataset.sebDirectDragReady === "true") {
+      continue;
+    }
+    drag.dataset.sebDirectDragReady = "true";
+    drag.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      selectedDrag = selectedDrag === drag ? null : drag;
+      markSelectedMoodleDrag(frameDocument, selectedDrag);
+    });
+    drag.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      selectedDrag = selectedDrag === drag ? null : drag;
+      markSelectedMoodleDrag(frameDocument, selectedDrag);
+    });
     drag.addEventListener("dragstart", (event) => {
+      event.stopPropagation();
       selectedDrag = drag;
-      markSelectedMoodleDrag(dragItems, selectedDrag);
+      markSelectedMoodleDrag(frameDocument, selectedDrag);
       drag.classList.add("moodle-dragging");
       event.dataTransfer?.setData("text/plain", drag.id || getMoodleDragValue(drag));
       event.dataTransfer?.setData("application/x-seb-moodle-drag-id", drag.id);
       if (event.dataTransfer) {
-        event.dataTransfer.effectAllowed = "move";
+        event.dataTransfer.effectAllowed = "copyMove";
       }
     });
-    drag.addEventListener("dragend", () => {
+    drag.addEventListener("dragend", (event) => {
+      event.stopPropagation();
       drag.classList.remove("moodle-dragging");
-      clearActiveMoodleDrops(dropTargets);
-    });
-    drag.addEventListener("click", (event) => {
-      event.preventDefault();
-      selectedDrag = selectedDrag === drag ? null : drag;
-      markSelectedMoodleDrag(dragItems, selectedDrag);
-    });
-    drag.addEventListener("keydown", (event) => {
-      if (event.key === "Enter" || event.key === " ") {
-        event.preventDefault();
-        selectedDrag = selectedDrag === drag ? null : drag;
-        markSelectedMoodleDrag(dragItems, selectedDrag);
-      }
+      clearActiveMoodleDrops(frameDocument);
     });
   }
 
-  for (const drop of dropTargets) {
-    drop.addEventListener("dragover", (event) => {
-      event.preventDefault();
-      drop.classList.add("moodle-drop-active");
-      if (event.dataTransfer) {
-        event.dataTransfer.dropEffect = "move";
-      }
-    });
-    drop.addEventListener("dragleave", () => {
-      drop.classList.remove("moodle-drop-active");
-    });
-    drop.addEventListener("drop", (event) => {
-      event.preventDefault();
-      const dragId = event.dataTransfer?.getData("application/x-seb-moodle-drag-id") || "";
-      const drag = dragId ? frameDocument.getElementById(dragId) : selectedDrag;
-      placeMoodleDragCard(frameDocument, drag, drop);
-      selectedDrag = null;
-      markSelectedMoodleDrag(dragItems, selectedDrag);
-      clearActiveMoodleDrops(dropTargets);
-    });
+  for (const drop of getMoodleDropTargets(frameDocument)) {
+    if (drop.dataset.sebDirectDropReady === "true") {
+      continue;
+    }
+    drop.dataset.sebDirectDropReady = "true";
     drop.addEventListener("click", (event) => {
       if (!selectedDrag) {
         return;
       }
       event.preventDefault();
+      event.stopPropagation();
       placeMoodleDragCard(frameDocument, selectedDrag, drop);
       selectedDrag = null;
-      markSelectedMoodleDrag(dragItems, selectedDrag);
+      markSelectedMoodleDrag(frameDocument, selectedDrag);
+    });
+    drop.addEventListener("dragover", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      drop.classList.add("moodle-drop-active");
+      if (event.dataTransfer) {
+        event.dataTransfer.dropEffect = "copy";
+      }
+    });
+    drop.addEventListener("drop", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const dragId = event.dataTransfer?.getData("application/x-seb-moodle-drag-id") || "";
+      const drag = dragId ? frameDocument.getElementById(dragId) : selectedDrag;
+      placeMoodleDragCard(frameDocument, drag, drop);
+      selectedDrag = null;
+      markSelectedMoodleDrag(frameDocument, selectedDrag);
+      clearActiveMoodleDrops(frameDocument);
     });
   }
 }
@@ -1126,6 +1366,14 @@ function isMoodleDropTarget(element) {
   return element.matches(".drop, .dropzone, .place, .droptarget, [data-dropzone], [data-place]");
 }
 
+function getClosestMoodleInteractiveDrag(target) {
+  return target?.closest?.(".moodle-drag-card") || null;
+}
+
+function getClosestMoodleDropTarget(target) {
+  return target?.closest?.(".seb-moodle-drop-normalized, .drop, .dropzone, .place, .droptarget, [data-dropzone], [data-place]") || null;
+}
+
 function ensureMoodleElementId(element, prefix) {
   if (!element) {
     return "";
@@ -1136,14 +1384,14 @@ function ensureMoodleElementId(element, prefix) {
   return element.id;
 }
 
-function markSelectedMoodleDrag(dragItems, selectedDrag) {
-  for (const drag of dragItems) {
+function markSelectedMoodleDrag(frameDocument, selectedDrag) {
+  for (const drag of frameDocument.querySelectorAll(".moodle-drag-card")) {
     drag.classList.toggle("moodle-drag-selected", drag === selectedDrag);
   }
 }
 
-function clearActiveMoodleDrops(dropTargets) {
-  for (const drop of dropTargets) {
+function clearActiveMoodleDrops(frameDocument) {
+  for (const drop of getMoodleDropTargets(frameDocument)) {
     drop.classList.remove("moodle-drop-active");
   }
 }
@@ -1152,36 +1400,40 @@ function placeMoodleDragCard(frameDocument, drag, drop) {
   if (!drag || !drop || drop.contains(drag)) {
     return;
   }
-  const previousDrop = drag.closest(".drop, .dropzone, .place, .droptarget, [data-dropzone], [data-place]");
-  returnExistingMoodleDropCards(frameDocument, drop);
-  drop.append(drag);
+  const previousDrop = drag.classList.contains("seb-moodle-placed-drag")
+    ? getClosestMoodleDropTarget(drag.parentElement)
+    : null;
+  const choice = getMoodleChoiceFromDrag(drag);
+  const placedCard = drag.classList.contains("seb-moodle-source-drag")
+    ? createMoodleDragCard(frameDocument, choice, true)
+    : drag;
+
+  clearMoodleDropAnswer(frameDocument, drop);
+  drop.append(placedCard);
   if (previousDrop && previousDrop !== drop) {
-    clearMoodleDropAnswer(previousDrop);
+    clearMoodleDropAnswer(frameDocument, previousDrop);
   }
   drop.classList.add("moodle-drop-filled");
-  updateMoodleDropAnswer(frameDocument, drop, drag);
+  updateMoodleDropAnswer(frameDocument, drop, placedCard);
 }
 
-function returnExistingMoodleDropCards(frameDocument, drop) {
-  const existingCards = Array.from(drop.querySelectorAll(".moodle-drag-card"));
-  for (const card of existingCards) {
-    const origin = card.dataset.sebDragOriginId
-      ? frameDocument.getElementById(card.dataset.sebDragOriginId)
-      : null;
-    if (origin) {
-      origin.append(card);
-    }
-  }
-  if (existingCards.length) {
-    clearMoodleDropAnswer(drop);
-  }
-}
-
-function clearMoodleDropAnswer(drop) {
+function clearMoodleDropAnswer(frameDocument, drop) {
+  drop.querySelectorAll(".seb-moodle-placed-drag").forEach((card) => card.remove());
   drop.classList.remove("moodle-drop-filled", "moodle-drop-active");
   delete drop.dataset.sebDropValue;
   delete drop.dataset.sebDropText;
   delete drop.dataset.sebFieldName;
+
+  for (const field of findMoodleDropFields(frameDocument, drop)) {
+    const type = (field.getAttribute("type") || field.tagName).toLowerCase();
+    if (type === "checkbox" || type === "radio") {
+      field.checked = false;
+    } else {
+      field.value = field.classList.contains("placeinput") || type === "hidden" ? "0" : "";
+    }
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+    field.dispatchEvent(new Event("change", { bubbles: true }));
+  }
 }
 
 function updateMoodleDropAnswer(frameDocument, drop, drag) {
@@ -1207,6 +1459,10 @@ function updateMoodleDropAnswer(frameDocument, drop, drag) {
 }
 
 function getMoodleDragValue(drag) {
+  const choice = getMoodleElementClassNumber(drag, "choice");
+  if (choice) {
+    return choice;
+  }
   const attrNames = ["data-value", "data-id", "data-choice", "data-dragid", "data-drag", "data-no", "value"];
   for (const attrName of attrNames) {
     const value = drag.getAttribute(attrName);
@@ -1219,6 +1475,46 @@ function getMoodleDragValue(drag) {
     return idMatch[1];
   }
   return drag.textContent.trim();
+}
+
+function getMoodleChoiceFromDrag(drag) {
+  return {
+    value: getMoodleDragValue(drag),
+    group: getMoodleDragGroup(drag),
+    text: drag.dataset.text || normalizeMoodleChoiceText(drag.textContent),
+    html: drag.innerHTML.trim() || escapeHtml(drag.dataset.text || drag.textContent.trim())
+  };
+}
+
+function getMoodleDragGroup(drag) {
+  return drag.dataset.group
+    || drag.getAttribute("data-group")
+    || getMoodleElementClassNumber(drag, "group")
+    || "1";
+}
+
+function getMoodleDropGroup(drop) {
+  return drop.dataset.group
+    || drop.getAttribute("data-group")
+    || getMoodleElementClassNumber(drop, "group")
+    || "";
+}
+
+function getMoodleDropPlace(drop) {
+  return drop.dataset.place
+    || drop.getAttribute("data-place")
+    || getMoodleElementClassNumber(drop, "place")
+    || (drop.id.match(/(?:^|_p)(\d+)$/)?.[1] || "");
+}
+
+function getMoodleElementClassNumber(element, prefix) {
+  for (const className of Array.from(element.classList || [])) {
+    const match = className.match(new RegExp(`^${prefix}(\\d+)$`, "i"));
+    if (match) {
+      return match[1];
+    }
+  }
+  return "";
 }
 
 function findMoodleDropFields(frameDocument, drop) {
@@ -1237,15 +1533,29 @@ function findMoodleDropFields(frameDocument, drop) {
     selectors.push(`[name="${CSS.escape(name)}"]`, `#${CSS.escape(name)}`);
   }
 
-  const place = drop.dataset.place || drop.getAttribute("data-place") || (drop.id.match(/(?:^|_p)(\d+)$/)?.[1] || "");
+  const place = getMoodleDropPlace(drop);
+  const group = getMoodleDropGroup(drop);
   if (place) {
+    const placeClass = `place${place}`;
+    const groupClass = group ? `group${group}` : "";
+    fields.push(...Array.from(frameDocument.querySelectorAll("input[name], select[name], textarea[name]")).filter((element) => (
+      element.classList.contains(placeClass) && (!groupClass || element.classList.contains(groupClass))
+    )));
     selectors.push(`[name$="_p${CSS.escape(place)}"]`, `[name$="[${CSS.escape(place)}]"]`);
+    selectors.push(`.placeinput.place${CSS.escape(place)}`, `input.place${CSS.escape(place)}[name]`);
+    if (group) {
+      selectors.push(`.placeinput.place${CSS.escape(place)}.group${CSS.escape(group)}`);
+    }
   }
 
   for (const selector of selectors) {
-    fields.push(...Array.from(frameDocument.querySelectorAll(selector)).filter((element) => (
-      element.matches("input[name], select[name], textarea[name]")
-    )));
+    try {
+      fields.push(...Array.from(frameDocument.querySelectorAll(selector)).filter((element) => (
+        element.matches("input[name], select[name], textarea[name]")
+      )));
+    } catch {
+      // Ignore selector forms that cannot be represented in CSS.
+    }
   }
 
   return Array.from(new Set(fields)).filter((field) => !field.disabled);
