@@ -13,28 +13,30 @@
 
 @keyframes sosCardBlink {
   0%,
-  100% {
+  46% {
     border-color: #d92d20;
     background: #fff5f5;
     box-shadow: 0 0 0 2px rgba(217, 45, 32, 0.18), 0 8px 22px rgba(217, 45, 32, 0.16);
   }
 
-  50% {
-    border-color: transparent;
-    background: transparent;
+  47%,
+  100% {
+    border-color: var(--line);
+    background: #ffffff;
     box-shadow: none;
   }
 }
 
 @keyframes sosBadgeBlink {
   0%,
-  100% {
+  46% {
     opacity: 1;
     background: #d92d20;
   }
 
-  50% {
-    opacity: 0.12;
+  47%,
+  100% {
+    opacity: 0;
     background: #d92d20;
   }
 }
@@ -255,7 +257,9 @@ textarea {
 }
 
 .session-item.sos {
-  animation: sosCardBlink 1.05s steps(2, end) infinite;
+  border-color: #d92d20;
+  background: #fff5f5;
+  animation: sosCardBlink 1s linear infinite;
 }
 
 .session-item.sos:hover,
@@ -301,7 +305,7 @@ textarea {
 .badge.sos {
   min-width: auto;
   background: #d92d20;
-  animation: sosBadgeBlink 1.05s steps(2, end) infinite;
+  animation: sosBadgeBlink 1s linear infinite;
 }
 
 .badge.stale {
@@ -672,12 +676,5 @@ textarea {
 
   .actions {
     justify-content: flex-start;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .session-item.sos,
-  .session-item.sos .badge.sos {
-    animation: none;
   }
 }
