@@ -27,7 +27,27 @@ const state = {
   moodleDraftTimer: null,
   lastSentMoodleDraftKey: "",
   socket: null,
-  screenshotObjectUrl: ""
+  screenshotObjectUrl: "",
+  screenshotLoadSeq: 0,
+  loadedScreenshotKey: "",
+  pendingScreenshotKey: "",
+  screenshotViewer: {
+    sessionId: "",
+    naturalWidth: 0,
+    naturalHeight: 0,
+    scale: 1,
+    minScale: 0.1,
+    maxScale: 8,
+    x: 0,
+    y: 0,
+    userAdjusted: false,
+    dragging: false,
+    pointerId: null,
+    startClientX: 0,
+    startClientY: 0,
+    startX: 0,
+    startY: 0
+  }
 };
 
 const els = {
@@ -47,6 +67,7 @@ const els = {
   moodleTab: document.getElementById("moodleTab"),
   liveView: document.getElementById("liveView"),
   moodleView: document.getElementById("moodleView"),
+  screenshotFrame: document.getElementById("screenshotFrame"),
   screenshot: document.getElementById("screenshot"),
   screenshotEmpty: document.getElementById("screenshotEmpty"),
   captureNow: document.getElementById("captureNow"),
@@ -203,6 +224,107 @@ function renderSessionTabs() {
   if (state.activeSessionTab === "moodle") {
     window.setTimeout(syncMoodleAnswerFallback, 0);
   }
+  if (state.activeSessionTab === "live") {
+    window.setTimeout(() => fitScreenshotToFrame(), 0);
+  }
+}
+
+function getScreenshotKey(session) {
+  return [
+    session.sessionId,
+    session.lastScreenshotAt || "",
+    session.lastScreenshotUrl || ""
+  ].join(":");
+}
+
+function clearScreenshotFrame() {
+  state.screenshotLoadSeq += 1;
+  state.loadedScreenshotKey = "";
+  state.pendingScreenshotKey = "";
+  state.screenshotViewer.sessionId = "";
+  state.screenshotViewer.naturalWidth = 0;
+  state.screenshotViewer.naturalHeight = 0;
+  state.screenshotViewer.scale = 1;
+  state.screenshotViewer.x = 0;
+  state.screenshotViewer.y = 0;
+  state.screenshotViewer.userAdjusted = false;
+  state.screenshotViewer.dragging = false;
+  state.screenshotViewer.pointerId = null;
+  if (state.screenshotObjectUrl) {
+    URL.revokeObjectURL(state.screenshotObjectUrl);
+    state.screenshotObjectUrl = "";
+  }
+  els.screenshot.removeAttribute("src");
+  els.screenshot.removeAttribute("style");
+  els.screenshotFrame.hidden = true;
+  els.screenshotFrame.classList.remove("dragging");
+  els.screenshotEmpty.hidden = false;
+}
+
+function getScreenshotFrameRect() {
+  return els.screenshotFrame.getBoundingClientRect();
+}
+
+function clampNumber(value, min, max) {
+  return Math.min(Math.max(value, min), max);
+}
+
+function clampScreenshotViewer() {
+  const viewer = state.screenshotViewer;
+  const rect = getScreenshotFrameRect();
+  if (!rect.width || !rect.height || !viewer.naturalWidth || !viewer.naturalHeight) {
+    return;
+  }
+
+  const scaledWidth = viewer.naturalWidth * viewer.scale;
+  const scaledHeight = viewer.naturalHeight * viewer.scale;
+  if (scaledWidth <= rect.width) {
+    viewer.x = (rect.width - scaledWidth) / 2;
+  } else {
+    viewer.x = clampNumber(viewer.x, rect.width - scaledWidth, 0);
+  }
+  if (scaledHeight <= rect.height) {
+    viewer.y = (rect.height - scaledHeight) / 2;
+  } else {
+    viewer.y = clampNumber(viewer.y, rect.height - scaledHeight, 0);
+  }
+}
+
+function applyScreenshotTransform() {
+  const viewer = state.screenshotViewer;
+  if (!viewer.naturalWidth || !viewer.naturalHeight) {
+    return;
+  }
+  els.screenshot.style.width = `${viewer.naturalWidth}px`;
+  els.screenshot.style.height = `${viewer.naturalHeight}px`;
+  els.screenshot.style.transform = `translate(${viewer.x}px, ${viewer.y}px) scale(${viewer.scale})`;
+}
+
+function fitScreenshotToFrame({ force = false } = {}) {
+  const viewer = state.screenshotViewer;
+  const rect = getScreenshotFrameRect();
+  if (!rect.width || !rect.height || !viewer.naturalWidth || !viewer.naturalHeight) {
+    return;
+  }
+
+  const fitScale = Math.max(0.05, Math.min(
+    rect.width / viewer.naturalWidth,
+    rect.height / viewer.naturalHeight,
+    2
+  ));
+  viewer.minScale = Math.max(0.03, fitScale * 0.25);
+  viewer.maxScale = Math.max(6, fitScale * 10);
+
+  if (force || !viewer.userAdjusted) {
+    viewer.scale = fitScale;
+    viewer.x = (rect.width - viewer.naturalWidth * viewer.scale) / 2;
+    viewer.y = (rect.height - viewer.naturalHeight * viewer.scale) / 2;
+    viewer.userAdjusted = false;
+  } else {
+    viewer.scale = clampNumber(viewer.scale, viewer.minScale, viewer.maxScale);
+  }
+  clampScreenshotViewer();
+  applyScreenshotTransform();
 }
 
 function renderDetail() {
@@ -226,38 +348,89 @@ function renderDetail() {
   els.clearSos.hidden = !session.sosActive;
 
   if (session.lastScreenshotUrl) {
-    els.screenshot.hidden = false;
-    els.screenshotEmpty.hidden = true;
-    loadScreenshot(session).catch(showError);
-  } else {
-    if (state.screenshotObjectUrl) {
-      URL.revokeObjectURL(state.screenshotObjectUrl);
-      state.screenshotObjectUrl = "";
+    if (state.screenshotViewer.sessionId && state.screenshotViewer.sessionId !== session.sessionId) {
+      clearScreenshotFrame();
     }
-    els.screenshot.removeAttribute("src");
-    els.screenshot.hidden = true;
-    els.screenshotEmpty.hidden = false;
+    const screenshotKey = getScreenshotKey(session);
+    els.screenshotFrame.hidden = false;
+    els.screenshotEmpty.hidden = true;
+    if (state.screenshotViewer.sessionId !== session.sessionId) {
+      state.screenshotViewer.sessionId = session.sessionId;
+      state.screenshotViewer.userAdjusted = false;
+    }
+    if (state.loadedScreenshotKey !== screenshotKey && state.pendingScreenshotKey !== screenshotKey) {
+      loadScreenshot(session, screenshotKey).catch(showError);
+    }
+  } else {
+    clearScreenshotFrame();
   }
   renderMoodleQuestion();
 }
 
-async function loadScreenshot(session) {
+async function loadScreenshot(session, screenshotKey) {
   const selectedId = session.sessionId;
-  const response = await fetch(`${session.lastScreenshotUrl}?t=${Date.now()}`, {
-    headers: authHeaders()
-  });
-  if (!response.ok) {
-    throw new Error(`${response.status} ${response.statusText}`);
+  const loadSeq = state.screenshotLoadSeq + 1;
+  state.screenshotLoadSeq = loadSeq;
+  state.pendingScreenshotKey = screenshotKey;
+  try {
+    const response = await fetch(`${session.lastScreenshotUrl}?t=${Date.now()}`, {
+      headers: authHeaders()
+    });
+    if (!response.ok) {
+      throw new Error(`${response.status} ${response.statusText}`);
+    }
+    const blob = await response.blob();
+    if (selectedId !== state.selectedSessionId || loadSeq !== state.screenshotLoadSeq) {
+      state.pendingScreenshotKey = "";
+      return;
+    }
+    const previousUrl = state.screenshotObjectUrl;
+    const previousWidth = state.screenshotViewer.naturalWidth;
+    const previousHeight = state.screenshotViewer.naturalHeight;
+    const nextUrl = URL.createObjectURL(blob);
+
+    await new Promise((resolve, reject) => {
+      els.screenshot.onload = () => resolve();
+      els.screenshot.onerror = () => {
+        els.screenshot.onload = null;
+        els.screenshot.onerror = null;
+        URL.revokeObjectURL(nextUrl);
+        if (previousUrl) {
+          els.screenshot.src = previousUrl;
+        } else {
+          els.screenshot.removeAttribute("src");
+        }
+        reject(new Error("Screenshot image failed to load"));
+      };
+      els.screenshot.src = nextUrl;
+    });
+    els.screenshot.onload = null;
+    els.screenshot.onerror = null;
+
+    if (selectedId !== state.selectedSessionId || loadSeq !== state.screenshotLoadSeq) {
+      URL.revokeObjectURL(nextUrl);
+      state.pendingScreenshotKey = "";
+      return;
+    }
+
+    state.screenshotObjectUrl = nextUrl;
+    state.loadedScreenshotKey = screenshotKey;
+    state.pendingScreenshotKey = "";
+    state.screenshotViewer.sessionId = selectedId;
+    state.screenshotViewer.naturalWidth = els.screenshot.naturalWidth;
+    state.screenshotViewer.naturalHeight = els.screenshot.naturalHeight;
+    const dimensionsChanged = previousWidth !== state.screenshotViewer.naturalWidth
+      || previousHeight !== state.screenshotViewer.naturalHeight;
+    fitScreenshotToFrame({ force: dimensionsChanged || !state.screenshotViewer.userAdjusted });
+    if (previousUrl) {
+      URL.revokeObjectURL(previousUrl);
+    }
+  } catch (error) {
+    if (loadSeq === state.screenshotLoadSeq) {
+      state.pendingScreenshotKey = "";
+    }
+    throw error;
   }
-  const blob = await response.blob();
-  if (selectedId !== state.selectedSessionId) {
-    return;
-  }
-  if (state.screenshotObjectUrl) {
-    URL.revokeObjectURL(state.screenshotObjectUrl);
-  }
-  state.screenshotObjectUrl = URL.createObjectURL(blob);
-  els.screenshot.src = state.screenshotObjectUrl;
 }
 
 function escapeHtml(value) {
@@ -2318,6 +2491,89 @@ document.addEventListener("keydown", (event) => {
     hideDisplayNamePrompt();
   }
 });
+
+function canUseScreenshotFrame() {
+  return !els.screenshotFrame.hidden
+    && Boolean(els.screenshot.getAttribute("src"))
+    && state.screenshotViewer.naturalWidth > 0
+    && state.screenshotViewer.naturalHeight > 0;
+}
+
+function handleScreenshotWheel(event) {
+  if (!canUseScreenshotFrame()) {
+    return;
+  }
+  event.preventDefault();
+  const viewer = state.screenshotViewer;
+  const rect = getScreenshotFrameRect();
+  const pointX = event.clientX - rect.left;
+  const pointY = event.clientY - rect.top;
+  const previousScale = viewer.scale;
+  const factor = Math.exp(-event.deltaY * 0.0015);
+  const nextScale = clampNumber(previousScale * factor, viewer.minScale, viewer.maxScale);
+  if (nextScale === previousScale) {
+    return;
+  }
+
+  const imageX = (pointX - viewer.x) / previousScale;
+  const imageY = (pointY - viewer.y) / previousScale;
+  viewer.scale = nextScale;
+  viewer.x = pointX - imageX * nextScale;
+  viewer.y = pointY - imageY * nextScale;
+  viewer.userAdjusted = true;
+  clampScreenshotViewer();
+  applyScreenshotTransform();
+}
+
+function handleScreenshotPointerDown(event) {
+  if (!canUseScreenshotFrame() || event.button !== 0) {
+    return;
+  }
+  event.preventDefault();
+  const viewer = state.screenshotViewer;
+  viewer.dragging = true;
+  viewer.pointerId = event.pointerId;
+  viewer.startClientX = event.clientX;
+  viewer.startClientY = event.clientY;
+  viewer.startX = viewer.x;
+  viewer.startY = viewer.y;
+  els.screenshotFrame.classList.add("dragging");
+  els.screenshotFrame.setPointerCapture(event.pointerId);
+}
+
+function handleScreenshotPointerMove(event) {
+  const viewer = state.screenshotViewer;
+  if (!viewer.dragging || viewer.pointerId !== event.pointerId) {
+    return;
+  }
+  event.preventDefault();
+  viewer.x = viewer.startX + event.clientX - viewer.startClientX;
+  viewer.y = viewer.startY + event.clientY - viewer.startClientY;
+  viewer.userAdjusted = true;
+  clampScreenshotViewer();
+  applyScreenshotTransform();
+}
+
+function endScreenshotPointerDrag(event) {
+  const viewer = state.screenshotViewer;
+  if (!viewer.dragging || viewer.pointerId !== event.pointerId) {
+    return;
+  }
+  viewer.dragging = false;
+  viewer.pointerId = null;
+  els.screenshotFrame.classList.remove("dragging");
+  if (els.screenshotFrame.hasPointerCapture(event.pointerId)) {
+    els.screenshotFrame.releasePointerCapture(event.pointerId);
+  }
+}
+
+els.screenshotFrame.addEventListener("wheel", handleScreenshotWheel, { passive: false });
+els.screenshotFrame.addEventListener("pointerdown", handleScreenshotPointerDown);
+els.screenshotFrame.addEventListener("pointermove", handleScreenshotPointerMove);
+els.screenshotFrame.addEventListener("pointerup", endScreenshotPointerDrag);
+els.screenshotFrame.addEventListener("pointercancel", endScreenshotPointerDrag);
+els.screenshotFrame.addEventListener("dblclick", () => fitScreenshotToFrame({ force: true }));
+window.addEventListener("resize", () => fitScreenshotToFrame());
 
 async function sendCommand(name) {
   if (!state.selectedSessionId) {
